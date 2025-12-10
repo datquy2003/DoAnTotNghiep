@@ -17,9 +17,6 @@ const LocationSelector = ({ selectedCountry, selectedCity, onChange }) => {
         const data = await locationApi.getCountries();
         if (isMounted) {
           setCountriesObj(data);
-          if (!selectedCountry) {
-            onChange("Country", "Việt Nam");
-          }
         }
       } catch (error) {
         console.error(error);
