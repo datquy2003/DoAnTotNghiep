@@ -78,7 +78,12 @@ const NotificationBell = () => {
   useEffect(() => {
     fetchNotifications();
     const interval = setInterval(fetchNotifications, 60 * 1000);
-    return () => clearInterval(interval);
+    const handleFocus = () => fetchNotifications();
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", handleFocus);
+    };
   }, [fetchNotifications]);
 
   const toggle = () => {
@@ -113,9 +118,25 @@ const NotificationBell = () => {
 
   const navigate = useNavigate();
 
+  const resolveLink = (item) => {
+    if (item.Type === "VIP_ONE_TIME_PURCHASE") {
+      const msg = (item.Message || "").toLowerCase();
+      if (msg.includes("liên hệ ứng viên") || msg.includes("ứng viên")) {
+        return "/employer/applicants";
+      }
+      if (msg.includes("đẩy top") || msg.includes("cv")) {
+        return "/candidate/cvs";
+      }
+      return "/employer/applicants";
+    }
+    if (item.LinkURL) return item.LinkURL;
+    return null;
+  };
+
   const handleNavigate = (item) => {
-    if (item.LinkURL) {
-      navigate(item.LinkURL);
+    const target = resolveLink(item);
+    if (target) {
+      navigate(target);
       setOpen(false);
     }
   };

@@ -125,41 +125,40 @@ router.post("/employer/reveal-contact", checkAuth, async (req, res) => {
     const pool = await sql.connect(sqlConfig);
     await assertRole(pool, employerId, ROLE.EMPLOYER);
 
-    const request = pool
+    const contactResult = await pool
       .request()
-      .input("CandidateID", sql.NVarChar, candidateId)
-      .input("EmployerID", sql.NVarChar, employerId);
+      .input("CandidateID", sql.NVarChar, candidateId).query(`
+        SELECT TOP 1 
+          cp.FullName,
+          cp.PhoneNumber,
+          u.Email,
+          cp.IsSearchable
+        FROM CandidateProfiles cp
+        JOIN Users u ON cp.UserID = u.FirebaseUserID
+        WHERE cp.UserID = @CandidateID
+      `);
 
-    let jobFilter = "";
-    if (jobId) {
-      request.input("JobID", sql.Int, jobId);
-      jobFilter = "AND j.JobID = @JobID";
-    }
+    const contact = contactResult.recordset[0];
 
-    const applicationResult = await request.query(`
-      SELECT TOP 1 
-        a.ApplicationID,
-        a.AppliedAt,
-        j.JobID,
-        j.JobTitle,
-        c.CompanyName
-      FROM Applications a
-      JOIN Jobs j ON a.JobID = j.JobID
-      JOIN Companies c ON j.CompanyID = c.CompanyID
-      WHERE a.CandidateID = @CandidateID
-        AND c.OwnerUserID = @EmployerID
-        ${jobFilter}
-      ORDER BY a.AppliedAt DESC
-    `);
-
-    const application = applicationResult.recordset[0];
-    if (!application) {
+    if (!contact) {
       return res.status(404).json({
-        message: "Không tìm thấy hồ sơ ứng tuyển phù hợp với yêu cầu của bạn.",
+        message: "Không tìm thấy hồ sơ ứng viên.",
       });
     }
 
-    const referenceId = `${candidateId}:${application.JobID}`;
+    if (!contact.IsSearchable) {
+      return res.status(403).json({
+        message: "Ứng viên không cho phép hiển thị thông tin.",
+      });
+    }
+
+    if (!contact.PhoneNumber) {
+      return res.status(404).json({
+        message: "Ứng viên chưa cập nhật số điện thoại.",
+      });
+    }
+
+    const referenceId = `${candidateId}`;
 
     const featureResult = await ensureVipFeatureAvailability({
       pool,
@@ -168,36 +167,14 @@ router.post("/employer/reveal-contact", checkAuth, async (req, res) => {
       referenceId,
       metadata: {
         candidateId,
-        candidateName: contactResult.recordset[0]?.FullName || "",
-        jobId: application.JobID,
-        jobTitle: application.JobTitle,
+        candidateName: contact.FullName || "",
       },
     });
 
-    const contactResult = await pool
-      .request()
-      .input("CandidateID", sql.NVarChar, candidateId).query(`
-        SELECT TOP 1 
-          cp.FullName,
-          cp.PhoneNumber,
-          u.Email
-        FROM CandidateProfiles cp
-        JOIN Users u ON cp.UserID = u.FirebaseUserID
-        WHERE cp.UserID = @CandidateID
-      `);
-
-    const contact = contactResult.recordset[0];
-
-    if (!contact || !contact.PhoneNumber) {
-      return res.status(404).json({
-        message: "Ứng viên chưa cập nhật số điện thoại.",
-      });
-    }
-
     return res.status(200).json({
       candidateId,
-      jobId: application.JobID,
-      jobTitle: application.JobTitle,
+      jobId: null,
+      jobTitle: null,
       phoneNumber: contact.PhoneNumber,
       fullName: contact.FullName,
       email: contact.Email,

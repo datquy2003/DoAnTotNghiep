@@ -12,7 +12,15 @@ const formatCurrencyVN = (value) =>
 const getVipLinkByRole = (roleId) =>
   roleId === 3 ? "/employer/subscription" : "/candidate/subscription";
 
-const buildOneTimeMessage = (plan, amount, metadata) => {
+const getRedirectForPlan = (plan) => {
+  if (plan.PlanType === "ONE_TIME") {
+    if (plan.RoleID === 3) return "/employer/applicants";
+    if (plan.RoleID === 4) return "/candidate/cvs";
+  }
+  return getVipLinkByRole(plan.RoleID);
+};
+
+const buildOneTimeMessage = (plan, amount, metadata = {}) => {
   const money = formatCurrencyVN(amount) + "₫";
   if (plan.RoleID === 4) {
     let extra = "";
@@ -42,7 +50,7 @@ const toVietnamTime = () => {
 };
 
 router.post("/create-checkout-session", checkAuth, async (req, res) => {
-  const { planId } = req.body;
+  const { planId, returnUrl, metadata } = req.body;
   const userId = req.firebaseUser.uid;
 
   if (!planId) return res.status(400).json({ message: "Thiếu thông tin gói." });
@@ -56,6 +64,15 @@ router.post("/create-checkout-session", checkAuth, async (req, res) => {
 
     const plan = planResult.recordset[0];
     if (!plan) return res.status(404).json({ message: "Gói không tồn tại." });
+
+    const safeReturn =
+      returnUrl && typeof returnUrl === "string" ? returnUrl : "";
+    const successUrl = `${CLIENT_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}&plan_id=${planId}${
+      safeReturn ? `&return_url=${encodeURIComponent(safeReturn)}` : ""
+    }`;
+    const cancelUrl = `${CLIENT_URL}/payment/cancel${
+      safeReturn ? `?return_url=${encodeURIComponent(safeReturn)}` : ""
+    }`;
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
@@ -76,9 +93,15 @@ router.post("/create-checkout-session", checkAuth, async (req, res) => {
         },
       ],
       mode: "payment",
-      success_url: `${CLIENT_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}&plan_id=${planId}`,
-      cancel_url: `${CLIENT_URL}/payment/cancel`,
+      success_url: successUrl,
+      cancel_url: cancelUrl,
       client_reference_id: userId,
+      metadata:
+        metadata && typeof metadata === "object"
+          ? Object.fromEntries(
+              Object.entries(metadata).map(([k, v]) => [k, String(v ?? "")])
+            )
+          : {},
     });
 
     res.json({ url: session.url });
@@ -183,35 +206,15 @@ router.post("/verify-payment", checkAuth, async (req, res) => {
         `);
 
       if (plan.PlanType === "ONE_TIME" || !plan.DurationInDays) {
-        const usageResult = await transaction
-          .request()
-          .input("UserID", sql.NVarChar, userId)
-          .query(
-            `
-            SELECT TOP 1 MetadataJson
-            FROM VipOneTimeUsage
-            WHERE UserID = @UserID
-            ORDER BY UsedAt DESC
-          `
-          );
-        let metadata = {};
-        try {
-          if (usageResult.recordset[0]?.MetadataJson) {
-            metadata = JSON.parse(usageResult.recordset[0].MetadataJson);
-          }
-        } catch (err) {
-          metadata = {};
-        }
-
         await transaction
           .request()
           .input("UserID", sql.NVarChar, userId)
           .input(
             "Message",
             sql.NVarChar,
-            buildOneTimeMessage(plan, plan.Price, metadata)
+            buildOneTimeMessage(plan, plan.Price, session.metadata || {})
           )
-          .input("LinkURL", sql.NVarChar, getVipLinkByRole(plan.RoleID))
+          .input("LinkURL", sql.NVarChar, getRedirectForPlan(plan))
           .input("Type", sql.NVarChar, NOTIF_TYPE_ONE_TIME)
           .input("ReferenceID", sql.NVarChar, plan.PlanID.toString())
           .query(
@@ -232,9 +235,11 @@ router.post("/verify-payment", checkAuth, async (req, res) => {
 
       await transaction.commit();
 
-      res
-        .status(200)
-        .json({ message: "Kích hoạt thành công!", planName: plan.PlanName });
+      res.status(200).json({
+        message: "Kích hoạt thành công!",
+        planName: plan.PlanName,
+        redirectUrl: getRedirectForPlan(plan),
+      });
     } catch (transError) {
       await transaction.rollback();
       throw transError;

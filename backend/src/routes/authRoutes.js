@@ -26,6 +26,7 @@ const vipSnapshotApply = `
     WHERE us.UserID = u.FirebaseUserID 
       AND us.Status = 1 
       AND us.EndDate > GETDATE()
+      AND ISNULL(us.SnapshotPlanType, sp.PlanType) <> 'ONE_TIME'
     ORDER BY us.EndDate DESC
   ) vip
 `;

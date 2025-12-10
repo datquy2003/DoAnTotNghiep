@@ -28,6 +28,23 @@ const geocodeAddress = (address) => {
   return apiClient.post("/utils/geocode", { address });
 };
 
+const searchSearchableCandidates = (params) => {
+  return apiClient.get("/candidates/searchable", { params });
+};
+
+const revealCandidateContact = (candidateId, jobId) => {
+  const payload = { candidateId };
+  if (jobId) payload.jobId = jobId;
+  return apiClient.post("/vip-features/employer/reveal-contact", payload);
+};
+
+const createOneTimeCheckout = (featureKey, candidateId) => {
+  return apiClient.post("/payment/create-one-time-session", {
+    featureKey,
+    candidateId,
+  });
+};
+
 export const profileApi = {
   updateBaseProfile,
   getCandidateProfile,
@@ -36,4 +53,7 @@ export const profileApi = {
   getCompanyProfile,
   updateCompanyProfile,
   geocodeAddress,
+  searchSearchableCandidates,
+  revealCandidateContact,
+  createOneTimeCheckout,
 };

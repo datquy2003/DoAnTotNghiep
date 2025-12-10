@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { paymentApi } from "../api/paymentApi";
 import { useAuth } from "../context/AuthContext";
@@ -15,6 +15,28 @@ const PaymentResult = () => {
 
   const sessionId = searchParams.get("session_id");
   const planId = searchParams.get("plan_id");
+  const returnUrl = searchParams.get("return_url");
+
+  const handleRedirect = useCallback(
+    (fallback) => {
+      if (returnUrl) {
+        navigate(returnUrl, { replace: true });
+        return;
+      }
+      if (fallback) {
+        navigate(fallback, { replace: true });
+        return;
+      }
+      if (appUser?.RoleID === 3) {
+        navigate("/employer/subscription", { state: { reload: true } });
+      } else if (appUser?.RoleID === 4) {
+        navigate("/candidate/subscription", { state: { reload: true } });
+      } else {
+        navigate("/");
+      }
+    },
+    [returnUrl, navigate, appUser?.RoleID]
+  );
 
   const isCalled = useRef(false);
 
@@ -31,12 +53,15 @@ const PaymentResult = () => {
 
       try {
         setMessage("Đang xác thực giao dịch với Stripe...");
-        await paymentApi.verifyPayment(sessionId, planId);
+        const res = await paymentApi.verifyPayment(sessionId, planId);
 
         await manualReloadFirebaseUser();
 
         setStatus("success");
         setMessage("Thanh toán thành công! Gói dịch vụ đã được kích hoạt.");
+        if (res.data?.redirectUrl) {
+          setTimeout(() => handleRedirect(res.data.redirectUrl), 200);
+        }
       } catch (error) {
         console.error("Lỗi verify:", error);
         setStatus("error");
@@ -53,7 +78,7 @@ const PaymentResult = () => {
       setStatus("error");
       setMessage("Bạn đã hủy giao dịch.");
     }
-  }, [sessionId, planId, manualReloadFirebaseUser]);
+  }, [sessionId, planId, manualReloadFirebaseUser, handleRedirect]);
 
   useEffect(() => {
     let timer;
@@ -72,16 +97,6 @@ const PaymentResult = () => {
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
-
-  const handleRedirect = () => {
-    if (appUser?.RoleID === 3) {
-      navigate("/employer/subscription", { state: { reload: true } });
-    } else if (appUser?.RoleID === 4) {
-      navigate("/candidate/subscription", { state: { reload: true } });
-    } else {
-      navigate("/");
-    }
-  };
 
   return (
     <div className="flex items-center justify-center min-h-screen p-4 bg-gray-50">
@@ -114,7 +129,7 @@ const PaymentResult = () => {
               Tự động quay lại trang gói dịch vụ sau {countdown}s...
             </p>
             <button
-              onClick={handleRedirect}
+              onClick={() => handleRedirect()}
               className="w-full py-3 font-semibold text-white transition-colors bg-green-600 rounded-lg shadow-md hover:bg-green-700"
             >
               Quay về

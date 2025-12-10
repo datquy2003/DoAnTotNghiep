@@ -25,6 +25,7 @@ import TestUserCreation from "./pages/admin/TestUserCreation"; // Comment dòng 
 import CandidateSubscription from "./pages/candidate/CandidateSubscription";
 import EmployerSubscription from "./pages/employer/EmployerSubscription";
 import PaymentResult from "./pages/PaymentResult";
+import ApplicantManagement from "./pages/employer/ApplicantManagement";
 
 const HomeCandidate = () => <div>Trang chủ ỨNG VIÊN (Role 4)</div>;
 const HomeEmployer = () => <div>Trang chủ NHÀ TUYỂN DỤNG (Role 3)</div>;
@@ -33,7 +34,6 @@ const AppliedJobs = () => <div>Trang Việc đã ứng tuyển</div>;
 const FavoriteJobs = () => <div>Trang Việc yêu thích</div>;
 const BlockedCompanies = () => <div>Trang Công ty đã chặn</div>;
 const JobManagementEmployer = () => <div>Trang Quản lý tin tuyển dụng</div>;
-const ApplicantManagement = () => <div>Trang Ứng viên ứng tuyển</div>;
 
 const Messages = () => <div>Trang Nhắn tin</div>;
 

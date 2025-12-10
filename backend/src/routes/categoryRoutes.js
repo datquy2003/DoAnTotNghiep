@@ -36,6 +36,20 @@ router.get("/", async (req, res) => {
   }
 });
 
+router.get("/specializations-all", async (_req, res) => {
+  try {
+    const pool = await sql.connect(sqlConfig);
+    const result = await pool
+      .request()
+      .query(
+        "SELECT SpecializationID, SpecializationName, CategoryID FROM Specializations ORDER BY SpecializationName ASC"
+      );
+    res.status(200).json(result.recordset);
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi lấy danh sách chuyên môn." });
+  }
+});
+
 router.post("/", checkAuth, checkAdminRole, async (req, res) => {
   const { CategoryName } = req.body;
   if (!CategoryName)

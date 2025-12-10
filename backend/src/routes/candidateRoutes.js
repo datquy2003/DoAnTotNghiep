@@ -6,6 +6,34 @@ import { getMondayOfWeek } from "../config/getMondayOfWeek.js";
 
 const router = express.Router();
 
+const ROLE = {
+  EMPLOYER: 3,
+};
+
+const ensureEmployerRole = async (pool, userId) => {
+  const roleResult = await pool
+    .request()
+    .input("UserID", sql.NVarChar, userId)
+    .query("SELECT TOP 1 RoleID FROM Users WHERE FirebaseUserID = @UserID");
+
+  if (roleResult.recordset[0]?.RoleID !== ROLE.EMPLOYER) {
+    const err = new Error("Bạn không có quyền truy cập danh sách ứng viên.");
+    err.status = 403;
+    throw err;
+  }
+};
+
+const maskPhoneNumber = (phone) => {
+  if (!phone) return null;
+  const digits = phone.toString().replace(/\D/g, "");
+  if (!digits) return null;
+  if (digits.length <= 4) return "*".repeat(digits.length);
+  const start = digits.slice(0, 3);
+  const end = digits.slice(-2);
+  const hidden = "*".repeat(Math.max(digits.length - 5, 2));
+  return `${start}${hidden}${end}`;
+};
+
 router.get("/me", checkAuth, async (req, res) => {
   const firebaseUid = req.firebaseUser.uid;
 
@@ -38,6 +66,182 @@ router.get("/me", checkAuth, async (req, res) => {
   } catch (error) {
     console.error("Lỗi GET /candidates/me:", error);
     res.status(500).json({ message: "Lỗi server." });
+  }
+});
+
+router.get("/searchable", checkAuth, async (req, res) => {
+  const employerId = req.firebaseUser.uid;
+  const { ageUnder, maxAge, specializationId, specialization, country, city } =
+    req.query;
+
+  const ageUnderNum =
+    ageUnder && !Number.isNaN(Number(ageUnder))
+      ? Number(ageUnder)
+      : maxAge && !Number.isNaN(Number(maxAge))
+      ? Number(maxAge)
+      : null;
+  const specIdNum =
+    specializationId && !Number.isNaN(Number(specializationId))
+      ? Number(specializationId)
+      : null;
+  const specName = (specialization || "").trim();
+  const countryFilter = (country || "").trim();
+  const cityFilter = (city || "").trim();
+
+  try {
+    const pool = await sql.connect(sqlConfig);
+    await ensureEmployerRole(pool, employerId);
+
+    const request = pool
+      .request()
+      .input("EmployerID", sql.NVarChar, employerId);
+
+    const filters = ["cp.IsSearchable = 1", "u.RoleID = 4"];
+
+    if (ageUnderNum !== null) {
+      request.input("AgeUnder", sql.Int, ageUnderNum);
+      filters.push("ageCalc.Age IS NOT NULL AND ageCalc.Age <= @AgeUnder");
+    }
+
+    if (specIdNum !== null) {
+      request.input("SpecID", sql.Int, specIdNum);
+      filters.push(
+        "EXISTS (SELECT 1 FROM CandidateSpecializations cs WHERE cs.CandidateID = cp.UserID AND cs.SpecializationID = @SpecID)"
+      );
+    }
+
+    if (specName) {
+      request.input("SpecName", sql.NVarChar, `%${specName}%`);
+      filters.push(
+        `EXISTS (
+          SELECT 1 
+          FROM CandidateSpecializations cs
+          JOIN Specializations s ON cs.SpecializationID = s.SpecializationID
+          WHERE cs.CandidateID = cp.UserID AND s.SpecializationName LIKE @SpecName
+        )`
+      );
+    }
+
+    if (countryFilter) {
+      request.input("Country", sql.NVarChar, `%${countryFilter}%`);
+      filters.push("cp.Country LIKE @Country");
+    }
+
+    if (cityFilter) {
+      request.input("City", sql.NVarChar, `%${cityFilter}%`);
+      filters.push("cp.City LIKE @City");
+    }
+
+    const whereClause = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
+
+    const result = await request.query(`
+      SELECT 
+        cp.UserID AS CandidateID,
+        cp.FullName,
+        cp.PhoneNumber,
+        cp.Birthday,
+        cp.City,
+        cp.Country,
+        cp.ProfileSummary,
+        cp.LastPushedAt,
+        u.CreatedAt,
+        ageCalc.Age,
+        specs.SpecJson,
+        cvTop.CVID AS DefaultCVID,
+        cvTop.CVName AS DefaultCVName,
+        cvTop.CVFileUrl AS DefaultCVUrl,
+        vip.PlanName AS CurrentVIP,
+        vip.EndDate AS CurrentVIPUntil
+      FROM CandidateProfiles cp
+      JOIN Users u ON u.FirebaseUserID = cp.UserID
+      OUTER APPLY (
+        SELECT CASE
+          WHEN cp.Birthday IS NULL THEN NULL
+          ELSE DATEDIFF(year, cp.Birthday, GETDATE()) -
+            CASE 
+              WHEN DATEADD(year, DATEDIFF(year, cp.Birthday, GETDATE()), cp.Birthday) > GETDATE() THEN 1 
+              ELSE 0 
+            END
+        END AS Age
+      ) ageCalc
+      OUTER APPLY (
+        SELECT (
+          SELECT 
+            s.SpecializationID AS id, 
+            s.SpecializationName AS name
+          FROM CandidateSpecializations cs
+          JOIN Specializations s ON cs.SpecializationID = s.SpecializationID
+          WHERE cs.CandidateID = cp.UserID
+          FOR JSON PATH
+        ) AS SpecJson
+      ) specs
+      OUTER APPLY (
+        SELECT TOP 1 
+          CVID, CVName, CVFileUrl
+        FROM CVs
+        WHERE UserID = cp.UserID AND IsLocked = 0
+        ORDER BY IsDefault DESC, CreatedAt DESC, CVID DESC
+      ) cvTop
+      OUTER APPLY (
+        SELECT TOP 1
+          ISNULL(us.SnapshotPlanName, sp.PlanName) AS PlanName,
+          us.EndDate
+        FROM UserSubscriptions us
+        LEFT JOIN SubscriptionPlans sp ON us.PlanID = sp.PlanID
+        WHERE us.UserID = cp.UserID AND us.Status = 1 AND us.EndDate > GETDATE()
+        ORDER BY us.EndDate DESC
+      ) vip
+      ${whereClause}
+      ORDER BY 
+        ISNULL(cp.LastPushedAt, u.CreatedAt) DESC,
+        cp.LastPushedAt DESC,
+        u.CreatedAt DESC
+    `);
+
+    const candidates = result.recordset.map((row) => {
+      let specializations = [];
+      if (row.SpecJson) {
+        try {
+          specializations = JSON.parse(row.SpecJson);
+        } catch (err) {
+          console.warn("Không parse được SpecJson:", err);
+        }
+      }
+
+      return {
+        candidateId: row.CandidateID,
+        fullName: row.FullName,
+        age: row.Age,
+        birthday: row.Birthday,
+        city: row.City,
+        country: row.Country,
+        profileSummary: row.ProfileSummary,
+        phoneMasked: maskPhoneNumber(row.PhoneNumber),
+        createdAt: row.CreatedAt,
+        defaultCv: row.DefaultCVName
+          ? {
+              id: row.DefaultCVID,
+              name: row.DefaultCVName,
+              url: row.DefaultCVUrl,
+            }
+          : null,
+        specializations,
+        isVip: !!row.CurrentVIP,
+        vipLabel: row.CurrentVIP || null,
+        lastPushedAt: row.LastPushedAt,
+      };
+    });
+
+    return res.status(200).json({ candidates });
+  } catch (error) {
+    const status = error.status || 500;
+    console.error("Lỗi GET /candidates/searchable:", error);
+    return res.status(status).json({
+      message:
+        status === 403
+          ? error.message || "Bạn không có quyền xem danh sách này."
+          : "Lỗi server khi lấy danh sách ứng viên.",
+    });
   }
 });
 

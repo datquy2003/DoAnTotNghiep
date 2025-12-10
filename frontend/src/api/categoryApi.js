@@ -4,6 +4,10 @@ const getCategories = () => {
   return apiClient.get("/categories");
 };
 
+const getAllSpecializations = () => {
+  return apiClient.get("/categories/specializations-all");
+};
+
 const createCategory = (data) => {
   return apiClient.post("/categories", data);
 };
@@ -34,6 +38,7 @@ const deleteSpecialization = (id) => {
 
 export const categoryApi = {
   getCategories,
+  getAllSpecializations,
   createCategory,
   updateCategory,
   deleteCategory,

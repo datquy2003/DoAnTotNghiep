@@ -58,12 +58,7 @@ const fetchUsageCount = async (pool, userId, featureKey, subscriptionId) => {
   return result.recordset[0]?.Total || 0;
 };
 
-const fetchUsageByReference = async (
-  pool,
-  userId,
-  featureKey,
-  referenceId
-) => {
+const fetchUsageByReference = async (pool, userId, featureKey, referenceId) => {
   if (!referenceId) return null;
 
   const result = await pool
@@ -162,10 +157,7 @@ export const ensureVipFeatureAvailability = async ({
   }
 
   if (remainingBeforeConsume <= 0) {
-    throw new VipFeatureError(
-      403,
-      "Bạn đã dùng hết số lượt cho quyền lợi này."
-    );
+    throw new VipFeatureError(403, "Bạn cần mua thêm lượt cho quyền lợi này.");
   }
 
   try {
