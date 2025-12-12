@@ -26,6 +26,86 @@ router.get("/my-jobs", checkAuth, async (req, res) => {
   }
 });
 
+router.post("/", checkAuth, async (req, res) => {
+  const employerId = req.firebaseUser.uid;
+  const {
+    JobTitle,
+    CategoryID,
+    SpecializationID,
+    Location,
+    JobType,
+    SalaryMin,
+    SalaryMax,
+    Experience,
+    JobDescription,
+    Requirements,
+    ExpiresAt,
+  } = req.body || {};
+
+  if (!JobTitle || !JobDescription || !ExpiresAt) {
+    return res.status(400).json({
+      message: "Thiếu thông tin bắt buộc (tiêu đề, mô tả, ngày hết hạn).",
+    });
+  }
+
+  try {
+    const pool = await sql.connect(sqlConfig);
+    // Lấy company theo chủ sở hữu (mỗi NTD có ít nhất 1 công ty)
+    const companyResult = await pool
+      .request()
+      .input("OwnerUserID", sql.NVarChar, employerId)
+      .query(
+        "SELECT TOP 1 CompanyID FROM Companies WHERE OwnerUserID = @OwnerUserID ORDER BY CompanyID ASC"
+      );
+
+    const company = companyResult.recordset[0];
+    if (!company) {
+      return res.status(400).json({
+        message: "Bạn chưa có thông tin công ty. Vui lòng tạo công ty trước.",
+      });
+    }
+
+    const expiresDate = new Date(ExpiresAt);
+    const now = new Date();
+    if (Number.isNaN(expiresDate.getTime()) || expiresDate < now) {
+      return res.status(400).json({
+        message: "Ngày hết hạn không hợp lệ (không được nhỏ hơn hiện tại).",
+      });
+    }
+
+    const insertResult = await pool
+      .request()
+      .input("CompanyID", sql.Int, company.CompanyID)
+      .input("CategoryID", CategoryID ? sql.Int : sql.Int, CategoryID || null)
+      .input(
+        "SpecializationID",
+        SpecializationID ? sql.Int : sql.Int,
+        SpecializationID || null
+      )
+      .input("JobTitle", sql.NVarChar, JobTitle)
+      .input("JobDescription", sql.NVarChar(sql.MAX), JobDescription)
+      .input("Requirements", sql.NVarChar(sql.MAX), Requirements || null)
+      .input("SalaryMin", sql.Decimal(18, 2), SalaryMin || null)
+      .input("SalaryMax", sql.Decimal(18, 2), SalaryMax || null)
+      .input("Location", sql.NVarChar, Location || null)
+      .input("JobType", sql.NVarChar, JobType || null)
+      .input("Experience", sql.NVarChar, Experience || null)
+      .input("ExpiresAt", sql.DateTime, expiresDate)
+      .query(
+        `INSERT INTO Jobs 
+        (CompanyID, CategoryID, SpecializationID, JobTitle, JobDescription, Requirements, SalaryMin, SalaryMax, Location, JobType, Experience, ExpiresAt, Status)
+        OUTPUT inserted.*
+        VALUES
+        (@CompanyID, @CategoryID, @SpecializationID, @JobTitle, @JobDescription, @Requirements, @SalaryMin, @SalaryMax, @Location, @JobType, @Experience, @ExpiresAt, 0)`
+      );
+
+    return res.status(201).json(insertResult.recordset[0]);
+  } catch (error) {
+    console.error("Lỗi tạo bài đăng:", error);
+    return res.status(500).json({ message: "Lỗi server khi tạo bài đăng." });
+  }
+});
+
 router.post("/:id/push-top", checkAuth, async (req, res) => {
   const { id } = req.params;
   const employerId = req.firebaseUser.uid;
