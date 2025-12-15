@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   FiPlus,
   FiInfo,
@@ -15,6 +15,7 @@ import { jobApi } from "../../api/jobApi";
 import { categoryApi } from "../../api/categoryApi";
 import { renderSalary } from "../../utils/renderSalary";
 import { STATUS_CONFIG } from "../../constants/statusConfig";
+import { EXPERIENCE_AMOUNT } from "../../constants/experienceAmount";
 import { GUIDE_ITEMS } from "../../constants/guideItemsJobPost";
 import { formatDate } from "../../utils/formatDate";
 import JobPostAddEditModal from "./components/JobPostAddEditModal";
@@ -38,6 +39,14 @@ const JobPostsManagement = () => {
   const [specializations, setSpecializations] = useState([]);
   const [pushingId, setPushingId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
+
+  const [searchTitle, setSearchTitle] = useState("");
+  const [filterStatus, setFilterStatus] = useState("ALL");
+  const [filterSpecId, setFilterSpecId] = useState("ALL");
+  const [filterExperience, setFilterExperience] = useState("ALL");
+  const [specSearch, setSpecSearch] = useState("");
+  const [specDropdownOpen, setSpecDropdownOpen] = useState(false);
+  const specDropdownRef = useRef(null);
   const [confirmModal, setConfirmModal] = useState({
     isOpen: false,
     title: "",
@@ -55,6 +64,77 @@ const JobPostsManagement = () => {
     resetEditFormState();
     setEditModalOpen(true);
   };
+
+  const normalizeText = (s) =>
+    (s || "")
+      .toString()
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+
+  const filteredJobs = useMemo(() => {
+    const keyword = normalizeText(searchTitle);
+
+    return (jobs || []).filter((job) => {
+      if (keyword) {
+        const t = normalizeText(job?.JobTitle);
+        if (!t.includes(keyword)) return false;
+      }
+
+      if (filterStatus !== "ALL") {
+        if (Number(job?.Status) !== Number(filterStatus)) return false;
+      }
+
+      if (filterSpecId !== "ALL") {
+        if (String(job?.SpecializationID || "") !== String(filterSpecId))
+          return false;
+      }
+
+      if (filterExperience !== "ALL") {
+        if ((job?.Experience || "") !== filterExperience) return false;
+      }
+
+      return true;
+    });
+  }, [jobs, searchTitle, filterStatus, filterSpecId, filterExperience]);
+
+  const experienceOptions = useMemo(() => {
+    return Object.entries(EXPERIENCE_AMOUNT)
+      .filter(([key]) => key !== "ALL")
+      .map(([key, value]) => ({ key, value }));
+  }, []);
+
+  const filteredSpecializations = useMemo(() => {
+    const keyword = normalizeText(specSearch);
+    const list = Array.isArray(specializations) ? specializations : [];
+    if (!keyword) return list;
+    return list.filter((s) =>
+      normalizeText(s?.SpecializationName).includes(keyword)
+    );
+  }, [specializations, specSearch]);
+
+  const selectedSpecLabel = useMemo(() => {
+    if (filterSpecId === "ALL") return "Tất cả";
+    const found = (specializations || []).find(
+      (s) => String(s.SpecializationID) === String(filterSpecId)
+    );
+    return found?.SpecializationName || "Chọn chuyên môn";
+  }, [filterSpecId, specializations]);
+
+  useEffect(() => {
+    if (!specDropdownOpen) return;
+    const onDocMouseDown = (e) => {
+      if (
+        specDropdownRef.current &&
+        !specDropdownRef.current.contains(e.target)
+      ) {
+        setSpecDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [specDropdownOpen]);
 
   const loadPushTopDashboard = async () => {
     setDashboardLoading(true);
@@ -364,6 +444,7 @@ const JobPostsManagement = () => {
                 <div className="flex flex-col items-end gap-1">
                   <div className="flex items-center gap-3">
                     <button
+                      type="button"
                       onClick={async () => {
                         await loadJobs();
                         loadPushTopDashboard();
@@ -400,6 +481,178 @@ const JobPostsManagement = () => {
             })()}
           </div>
 
+          <div className="p-4 mb-4 bg-white border border-gray-100 shadow-sm rounded-xl">
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+                <div className="flex-1">
+                  <div className="mb-1 text-xs font-semibold text-gray-600">
+                    Tìm theo tiêu đề
+                  </div>
+                  <input
+                    value={searchTitle}
+                    onChange={(e) => setSearchTitle(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+
+                <div className="min-w-[180px]">
+                  <div className="mb-1 text-xs font-semibold text-gray-600">
+                    Trạng thái
+                  </div>
+                  <select
+                    value={filterStatus}
+                    onChange={(e) => setFilterStatus(e.target.value)}
+                    className="w-full px-3 py-2 text-sm bg-white border border-gray-300 rounded-lg"
+                  >
+                    <option value="ALL">Tất cả</option>
+                    {Object.entries(STATUS_CONFIG).map(([k, v]) => (
+                      <option key={k} value={k}>
+                        {v?.label || `Trạng thái ${k}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="min-w-[220px]">
+                  <div className="mb-1 text-xs font-semibold text-gray-600">
+                    Chuyên môn
+                  </div>
+                  <div className="relative" ref={specDropdownRef}>
+                    <div className="relative">
+                      <input
+                        value={specSearch}
+                        onChange={(e) => {
+                          setSpecSearch(e.target.value);
+                          setSpecDropdownOpen(true);
+                        }}
+                        onFocus={() => setSpecDropdownOpen(true)}
+                        placeholder={selectedSpecLabel}
+                        className="w-full px-3 py-2 pr-12 text-sm bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                      {specSearch ? (
+                        <button
+                          type="button"
+                          title="Xóa"
+                          onClick={() => {
+                            setSpecSearch("");
+                            setFilterSpecId("ALL");
+                            setSpecDropdownOpen(false);
+                          }}
+                          className="absolute text-gray-400 -translate-y-1/2 right-8 top-1/2 hover:text-gray-700"
+                        >
+                          ×
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => setSpecDropdownOpen((v) => !v)}
+                        className="absolute text-gray-400 -translate-y-1/2 right-3 top-1/2 hover:text-gray-700"
+                        aria-label="Mở danh sách chuyên môn"
+                      >
+                        ▾
+                      </button>
+                    </div>
+
+                    {specDropdownOpen ? (
+                      <div className="absolute z-20 w-full mt-2 bg-white border border-gray-200 rounded-lg shadow-lg">
+                        <div className="py-1 overflow-auto max-h-64">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFilterSpecId("ALL");
+                              setSpecSearch("");
+                              setSpecDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                              filterSpecId === "ALL"
+                                ? "bg-blue-50 text-blue-700 font-semibold"
+                                : "text-gray-800"
+                            }`}
+                          >
+                            Tất cả
+                          </button>
+                          {filteredSpecializations.length === 0 ? (
+                            <div className="px-3 py-2 text-sm text-gray-500">
+                              Không có chuyên môn phù hợp.
+                            </div>
+                          ) : (
+                            filteredSpecializations.map((s) => {
+                              const active =
+                                String(filterSpecId) ===
+                                String(s.SpecializationID);
+                              return (
+                                <button
+                                  key={s.SpecializationID}
+                                  type="button"
+                                  onClick={() => {
+                                    setFilterSpecId(String(s.SpecializationID));
+                                    setSpecSearch(s.SpecializationName || "");
+                                    setSpecDropdownOpen(false);
+                                  }}
+                                  className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                                    active
+                                      ? "bg-blue-50 text-blue-700 font-semibold"
+                                      : "text-gray-800"
+                                  }`}
+                                >
+                                  {s.SpecializationName}
+                                </button>
+                              );
+                            })
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="min-w-[200px]">
+                  <div className="mb-1 text-xs font-semibold text-gray-600">
+                    Kinh nghiệm
+                  </div>
+                  <select
+                    value={filterExperience}
+                    onChange={(e) => setFilterExperience(e.target.value)}
+                    className="w-full px-3 py-2 text-sm bg-white border border-gray-300 rounded-lg"
+                  >
+                    <option value="ALL">Tất cả</option>
+                    {experienceOptions.map((x) => (
+                      <option key={x.key} value={x.value}>
+                        {x.value}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-end">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm text-gray-700">
+                    Kết quả:{" "}
+                    <span className="font-semibold text-gray-900">
+                      {filteredJobs.length}
+                    </span>
+                    /{jobs.length}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchTitle("");
+                      setFilterStatus("ALL");
+                      setFilterSpecId("ALL");
+                      setFilterExperience("ALL");
+                      setSpecSearch("");
+                      setSpecDropdownOpen(false);
+                    }}
+                    className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+                  >
+                    Xóa lọc
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="overflow-hidden bg-white border border-gray-100 shadow-sm rounded-xl">
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
@@ -432,17 +685,17 @@ const JobPostsManagement = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {jobs.length === 0 ? (
+                  {filteredJobs.length === 0 ? (
                     <tr>
                       <td
                         colSpan={8}
                         className="px-4 py-10 text-sm text-center text-gray-500"
                       >
-                        Chưa có bài đăng nào.
+                        Không có kết quả phù hợp.
                       </td>
                     </tr>
                   ) : (
-                    jobs.map((job) => (
+                    filteredJobs.map((job) => (
                       <tr key={job.JobID} className="hover:bg-gray-50">
                         <td className="px-4 py-3 text-sm font-semibold text-gray-900">
                           {job.JobTitle}
@@ -606,20 +859,15 @@ const JobPostsManagement = () => {
               <div className="text-sm font-semibold text-gray-900">
                 Quản lý đẩy top
               </div>
-              <button
-                onClick={loadPushTopDashboard}
-                disabled={dashboardLoading}
-                className="text-xs font-semibold text-blue-700 hover:text-blue-900 disabled:opacity-60"
-              >
-                {dashboardLoading ? "Đang tải..." : "Làm mới"}
-              </button>
             </div>
 
             <div className="p-3 mt-3 border border-gray-100 rounded-lg bg-gray-50">
               {pushTopDashboard ? (
                 <div className="space-y-2 text-sm text-gray-800">
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold text-gray-700">Gói</span>
+                    <span className="font-semibold text-gray-700">
+                      Tài khoản:
+                    </span>
                     <span
                       className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${
                         pushTopDashboard.isVip
@@ -650,10 +898,8 @@ const JobPostsManagement = () => {
                   ) : (
                     <>
                       <div className="text-gray-700">
-                        Quy tắc:{" "}
-                        <span className="font-semibold">
-                          1 lần/tuần (toàn bộ bài)
-                        </span>
+                        Khả dụng:{" "}
+                        <span className="font-semibold">1 bài viết/tuần</span>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-gray-700">Còn lại tuần này</span>

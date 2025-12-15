@@ -64,6 +64,13 @@ export default function JobPostAddEditModal({
   const requirementsRef = useRef(null);
   const benefitsRef = useRef(null);
   const expiresAtRef = useRef(null);
+  const justSelectedDropdownRef = useRef(false);
+  const markJustSelected = () => {
+    justSelectedDropdownRef.current = true;
+    setTimeout(() => {
+      justSelectedDropdownRef.current = false;
+    }, 0);
+  };
 
   const safeShowDatePicker = (el) => {
     try {
@@ -382,43 +389,68 @@ export default function JobPostAddEditModal({
     }
 
     const norm = (v) => (v || "").toString().trim().toLowerCase();
+    const findByLabel = (list, getLabel, text) => {
+      const t = norm(text);
+      if (!t) return null;
+      return (list || []).find((x) => norm(getLabel(x)) === t) || null;
+    };
 
-    if (
-      categorySearch.trim() &&
-      !sortedCategories.some(
-        (c) => norm(c.CategoryName) === norm(categorySearch)
-      )
-    ) {
+    const matchedCategory = findByLabel(
+      sortedCategories,
+      (c) => c.CategoryName,
+      categorySearch
+    );
+    const matchedEducation = findByLabel(
+      educationList,
+      (x) => x.value,
+      educationSearch
+    );
+    const matchedJobType = findByLabel(
+      jobTypeList,
+      (x) => x.value,
+      jobTypeSearch
+    );
+    const matchedExperience = findByLabel(
+      experienceList,
+      (x) => x.value,
+      experienceSearch
+    );
+
+    const categoryIdToSend = matchedCategory
+      ? Number(matchedCategory.CategoryID)
+      : null;
+    const matchedSpec =
+      categoryIdToSend && specSearch.trim()
+        ? (sortedSpecializations || []).find(
+            (s) =>
+              Number(s.CategoryID) === Number(categoryIdToSend) &&
+              norm(s.SpecializationName) === norm(specSearch)
+          ) || null
+        : null;
+    const specIdToSend = matchedSpec
+      ? Number(matchedSpec.SpecializationID)
+      : null;
+    const educationToSend = matchedEducation ? matchedEducation.value : "";
+    const jobTypeToSend = matchedJobType ? matchedJobType.value : "";
+    const experienceToSend = matchedExperience ? matchedExperience.value : "";
+
+    if (categorySearch.trim() && !matchedCategory) {
       toast.error("Danh mục không hợp lệ, vui lòng chọn từ danh sách.");
       return;
     }
-    if (
-      specSearch.trim() &&
-      !sortedSpecializations.some(
-        (s) => norm(s.SpecializationName) === norm(specSearch)
-      )
-    ) {
+    if (specSearch.trim() && (!categoryIdToSend || !matchedSpec)) {
       toast.error("Chuyên môn không hợp lệ, vui lòng chọn từ danh sách.");
       return;
     }
-    if (
-      jobTypeSearch.trim() &&
-      !jobTypeList.some((t) => norm(t.value) === norm(jobTypeSearch))
-    ) {
+    if (jobTypeSearch.trim() && !matchedJobType) {
       toast.error("Vị trí công việc không hợp lệ, vui lòng chọn từ danh sách.");
       return;
     }
-    if (
-      educationSearch.trim() &&
-      !educationList.some((e) => norm(e.value) === norm(educationSearch))
-    ) {
+    if (educationSearch.trim() && !matchedEducation) {
       toast.error("Trình độ học vấn không hợp lệ, vui lòng chọn từ danh sách.");
       return;
     }
-    if (
-      experienceSearch.trim() &&
-      !experienceList.some((e) => norm(e.value) === norm(experienceSearch))
-    ) {
+    if (experienceSearch.trim() && !matchedExperience) {
       toast.error("Kinh nghiệm không hợp lệ, vui lòng chọn từ danh sách.");
       return;
     }
@@ -433,10 +465,11 @@ export default function JobPostAddEditModal({
 
     const payload = {
       ...job,
-      CategoryID: job.CategoryID ? Number(job.CategoryID) : null,
-      SpecializationID: job.SpecializationID
-        ? Number(job.SpecializationID)
-        : null,
+      CategoryID: categoryIdToSend,
+      SpecializationID: specIdToSend,
+      EducationLevel: educationToSend,
+      JobType: jobTypeToSend,
+      Experience: experienceToSend,
       SalaryMin: agree ? null : salaryMinNum,
       SalaryMax: agree ? null : salaryMaxNum,
       VacancyCount: job.VacancyCount !== "" ? Number(job.VacancyCount) : null,
@@ -531,18 +564,21 @@ export default function JobPostAddEditModal({
                   <input
                     type="text"
                     placeholder="-- Chọn danh mục --"
-                    value={
-                      categorySearch !== ""
-                        ? categorySearch
-                        : sortedCategories.find(
-                            (c) =>
-                              String(c.CategoryID) === String(job.CategoryID)
-                          )?.CategoryName || ""
-                    }
-                    onFocus={() => setCategoryOpen(true)}
-                    onChange={(e) => {
-                      setCategorySearch(e.target.value);
+                    value={categorySearch}
+                    onFocus={() => {
+                      if (justSelectedDropdownRef.current) return;
                       setCategoryOpen(true);
+                    }}
+                    onChange={(e) => {
+                      const nextText = e.target.value;
+                      setCategorySearch(nextText);
+                      setCategoryOpen(true);
+                      if (job.CategoryID) {
+                        handleInputChange("CategoryID", "");
+                        handleInputChange("SpecializationID", "");
+                        setSpecSearch("");
+                        setSpecOpen(false);
+                      }
                     }}
                     className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
@@ -571,6 +607,7 @@ export default function JobPostAddEditModal({
                             type="button"
                             key={c.CategoryID}
                             onClick={() => {
+                              markJustSelected();
                               handleInputChange("CategoryID", c.CategoryID);
                               handleInputChange("SpecializationID", "");
                               setCategoryOpen(false);
@@ -603,20 +640,19 @@ export default function JobPostAddEditModal({
                         ? "-- Chọn chuyên môn --"
                         : "Chọn danh mục trước"
                     }
-                    value={
-                      specSearch !== ""
-                        ? specSearch
-                        : filteredSpecs.find(
-                            (s) =>
-                              String(s.SpecializationID) ===
-                              String(job.SpecializationID)
-                          )?.SpecializationName || ""
-                    }
-                    onFocus={() => job.CategoryID && setSpecOpen(true)}
+                    value={specSearch}
+                    onFocus={() => {
+                      if (justSelectedDropdownRef.current) return;
+                      job.CategoryID && setSpecOpen(true);
+                    }}
                     onChange={(e) => {
                       if (!job.CategoryID) return;
-                      setSpecSearch(e.target.value);
+                      const nextText = e.target.value;
+                      setSpecSearch(nextText);
                       setSpecOpen(true);
+                      if (job.SpecializationID) {
+                        handleInputChange("SpecializationID", "");
+                      }
                     }}
                     disabled={!job.CategoryID}
                     className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
@@ -643,6 +679,7 @@ export default function JobPostAddEditModal({
                             type="button"
                             key={s.SpecializationID}
                             onClick={() => {
+                              markJustSelected();
                               handleInputChange(
                                 "SpecializationID",
                                 s.SpecializationID
@@ -676,17 +713,18 @@ export default function JobPostAddEditModal({
                   <input
                     type="text"
                     placeholder="-- Chọn trình độ --"
-                    value={
-                      educationSearch !== ""
-                        ? educationSearch
-                        : educationList.find(
-                            (e) => e.value === job.EducationLevel
-                          )?.value || ""
-                    }
-                    onFocus={() => setEducationOpen(true)}
-                    onChange={(e) => {
-                      setEducationSearch(e.target.value);
+                    value={educationSearch}
+                    onFocus={() => {
+                      if (justSelectedDropdownRef.current) return;
                       setEducationOpen(true);
+                    }}
+                    onChange={(e) => {
+                      const nextText = e.target.value;
+                      setEducationSearch(nextText);
+                      setEducationOpen(true);
+                      if (job.EducationLevel) {
+                        handleInputChange("EducationLevel", "");
+                      }
                     }}
                     className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
@@ -722,6 +760,7 @@ export default function JobPostAddEditModal({
                               type="button"
                               key={e.key}
                               onClick={() => {
+                                markJustSelected();
                                 handleInputChange("EducationLevel", e.value);
                                 setEducationOpen(false);
                                 setEducationSearch(e.value || "");
@@ -749,16 +788,18 @@ export default function JobPostAddEditModal({
                   <input
                     type="text"
                     placeholder="-- Chọn vị trí công việc --"
-                    value={
-                      jobTypeSearch !== ""
-                        ? jobTypeSearch
-                        : jobTypeList.find((t) => t.value === job.JobType)
-                            ?.value || ""
-                    }
-                    onFocus={() => setJobTypeOpen(true)}
-                    onChange={(e) => {
-                      setJobTypeSearch(e.target.value);
+                    value={jobTypeSearch}
+                    onFocus={() => {
+                      if (justSelectedDropdownRef.current) return;
                       setJobTypeOpen(true);
+                    }}
+                    onChange={(e) => {
+                      const nextText = e.target.value;
+                      setJobTypeSearch(nextText);
+                      setJobTypeOpen(true);
+                      if (job.JobType) {
+                        handleInputChange("JobType", "");
+                      }
                     }}
                     className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
@@ -784,6 +825,7 @@ export default function JobPostAddEditModal({
                             type="button"
                             key={t.key}
                             onClick={() => {
+                              markJustSelected();
                               handleInputChange("JobType", t.value);
                               setJobTypeOpen(false);
                               setJobTypeSearch(t.value || "");
@@ -852,16 +894,18 @@ export default function JobPostAddEditModal({
                   <input
                     type="text"
                     placeholder="-- Chọn kinh nghiệm --"
-                    value={
-                      experienceSearch !== ""
-                        ? experienceSearch
-                        : experienceList.find((e) => e.value === job.Experience)
-                            ?.value || ""
-                    }
-                    onFocus={() => setExperienceOpen(true)}
-                    onChange={(e) => {
-                      setExperienceSearch(e.target.value);
+                    value={experienceSearch}
+                    onFocus={() => {
+                      if (justSelectedDropdownRef.current) return;
                       setExperienceOpen(true);
+                    }}
+                    onChange={(e) => {
+                      const nextText = e.target.value;
+                      setExperienceSearch(nextText);
+                      setExperienceOpen(true);
+                      if (job.Experience) {
+                        handleInputChange("Experience", "");
+                      }
                     }}
                     className="w-full px-3 py-2 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
@@ -887,6 +931,7 @@ export default function JobPostAddEditModal({
                             type="button"
                             key={e.key}
                             onClick={() => {
+                              markJustSelected();
                               handleInputChange("Experience", e.value);
                               setExperienceOpen(false);
                               setExperienceSearch(e.value || "");
@@ -1187,7 +1232,9 @@ export default function JobPostAddEditModal({
               </div>
             </div>
             <span className="text-xs italic text-gray-500">
-              Nếu chọn cùng chung một thứ thì sẽ hiển thị mỗi thứ đó.
+              Nếu chọn cùng chung một thứ thì sẽ hiển thị mỗi thứ đó. <br />
+              Nếu không chọn thì sẽ hiển thị là{" "}
+              <b>Thời gian làm việc linh hoạt</b>.
             </span>
 
             <div className="grid grid-cols-1 gap-4">

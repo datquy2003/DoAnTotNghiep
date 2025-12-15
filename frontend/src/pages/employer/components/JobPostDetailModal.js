@@ -27,7 +27,17 @@ export default function JobPostDetailModal({
         wt = [];
       }
     }
-    return Array.isArray(wt) ? wt : [];
+    const arr = Array.isArray(wt) ? wt : [];
+    const meaningful = arr
+      .map((x) => ({
+        dayFrom: (x?.dayFrom || "").toString().trim(),
+        dayTo: (x?.dayTo || "").toString().trim(),
+        timeFrom: (x?.timeFrom || "").toString().trim(),
+        timeTo: (x?.timeTo || "").toString().trim(),
+        id: x?.id,
+      }))
+      .filter((x) => x.dayFrom || x.dayTo || x.timeFrom || x.timeTo);
+    return meaningful;
   }, [job]);
 
   const leftRows = useMemo(() => {
@@ -67,7 +77,7 @@ export default function JobPostDetailModal({
               ))}
             </div>
           ) : (
-            "—"
+            "Thời gian làm việc linh hoạt"
           ),
       },
       {

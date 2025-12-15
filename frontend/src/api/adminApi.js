@@ -32,6 +32,26 @@ const getUserSubscriptions = (uid) => {
   return apiClient.get(`/admin/users/${uid}/subscriptions`);
 };
 
+const getPendingJobs = () => {
+  return apiClient.get("/admin/jobs/pending");
+};
+
+const getJobDetail = (jobId) => {
+  return apiClient.get(`/admin/jobs/${jobId}`);
+};
+
+const approveJob = (jobId) => {
+  return apiClient.patch(`/admin/jobs/${jobId}/approve`);
+};
+
+const rejectJob = (jobId) => {
+  return apiClient.patch(`/admin/jobs/${jobId}/reject`);
+};
+
+const getActiveJobs = () => {
+  return apiClient.get("/admin/jobs/active");
+};
+
 export const adminApi = {
   getCandidates,
   getEmployers,
@@ -41,4 +61,9 @@ export const adminApi = {
   createSystemAdmin,
   getUsersNoRole,
   getUserSubscriptions,
+  getPendingJobs,
+  getJobDetail,
+  approveJob,
+  rejectJob,
+  getActiveJobs,
 };

@@ -233,8 +233,7 @@ router.delete("/users/:uid", checkAuth, async (req, res) => {
     try {
       const activeSubs = await transaction
         .request()
-        .input("UserID", sql.NVarChar, uid)
-        .query(`
+        .input("UserID", sql.NVarChar, uid).query(`
           SELECT 
             ISNULL(us.SnapshotPlanType, sp.PlanType) AS PlanType
           FROM UserSubscriptions us
@@ -369,6 +368,279 @@ router.post(
         return res.status(400).json({ message: "Email này đã được sử dụng." });
       }
       res.status(500).json({ message: "Lỗi server khi tạo Admin." });
+    }
+  }
+);
+
+const buildWorkingTimesSubquery = async (pool) => {
+  const schemaRes = await pool.request().query(`
+      SELECT 
+        CASE WHEN COL_LENGTH('JobWorkingShifts','ShiftGroupID') IS NULL THEN 0 ELSE 1 END AS HasShiftGroup,
+        CASE WHEN COL_LENGTH('JobWorkingShifts','RangeDayFrom') IS NULL THEN 0 ELSE 1 END AS HasRangeDayFrom,
+        CASE WHEN COL_LENGTH('JobWorkingShifts','RangeDayTo') IS NULL THEN 0 ELSE 1 END AS HasRangeDayTo
+  `);
+
+  const hasShiftGroup = schemaRes.recordset?.[0]?.HasShiftGroup === 1;
+  const hasRangeDayFrom = schemaRes.recordset?.[0]?.HasRangeDayFrom === 1;
+  const hasRangeDayTo = schemaRes.recordset?.[0]?.HasRangeDayTo === 1;
+
+  return hasShiftGroup && hasRangeDayFrom && hasRangeDayTo
+    ? `
+        (
+          SELECT
+            s.ShiftGroupID AS shiftGroupId,
+            CASE s.RangeDayFrom
+              WHEN 1 THEN N'Thứ 2'
+              WHEN 2 THEN N'Thứ 3'
+              WHEN 3 THEN N'Thứ 4'
+              WHEN 4 THEN N'Thứ 5'
+              WHEN 5 THEN N'Thứ 6'
+              WHEN 6 THEN N'Thứ 7'
+              WHEN 7 THEN N'Chủ nhật'
+            END AS dayFrom,
+            CASE s.RangeDayTo
+              WHEN 1 THEN N'Thứ 2'
+              WHEN 2 THEN N'Thứ 3'
+              WHEN 3 THEN N'Thứ 4'
+              WHEN 4 THEN N'Thứ 5'
+              WHEN 5 THEN N'Thứ 6'
+              WHEN 6 THEN N'Thứ 7'
+              WHEN 7 THEN N'Chủ nhật'
+            END AS dayTo,
+            LEFT(CONVERT(varchar(8), MIN(s.TimeFrom), 108), 5) AS timeFrom,
+            LEFT(CONVERT(varchar(8), MIN(s.TimeTo), 108), 5) AS timeTo
+          FROM JobWorkingShifts s
+          WHERE s.JobID = j.JobID
+          GROUP BY s.ShiftGroupID, s.RangeDayFrom, s.RangeDayTo
+          ORDER BY MIN(s.ShiftID) ASC
+          FOR JSON PATH
+        )
+      `
+    : `
+        (
+          SELECT
+            CASE s.DayOfWeek
+              WHEN 1 THEN N'Thứ 2'
+              WHEN 2 THEN N'Thứ 3'
+              WHEN 3 THEN N'Thứ 4'
+              WHEN 4 THEN N'Thứ 5'
+              WHEN 5 THEN N'Thứ 6'
+              WHEN 6 THEN N'Thứ 7'
+              WHEN 7 THEN N'Chủ nhật'
+            END AS dayFrom,
+            CASE s.DayOfWeek
+              WHEN 1 THEN N'Thứ 2'
+              WHEN 2 THEN N'Thứ 3'
+              WHEN 3 THEN N'Thứ 4'
+              WHEN 4 THEN N'Thứ 5'
+              WHEN 5 THEN N'Thứ 6'
+              WHEN 6 THEN N'Thứ 7'
+              WHEN 7 THEN N'Chủ nhật'
+            END AS dayTo,
+            LEFT(CONVERT(varchar(8), s.TimeFrom, 108), 5) AS timeFrom,
+            LEFT(CONVERT(varchar(8), s.TimeTo, 108), 5) AS timeTo
+          FROM JobWorkingShifts s
+          WHERE s.JobID = j.JobID
+          ORDER BY s.DayOfWeek ASC, s.TimeFrom ASC
+          FOR JSON PATH
+        )
+      `;
+};
+
+router.get("/jobs/pending", checkAuth, checkAdminRole, async (req, res) => {
+  try {
+    const pool = await sql.connect(sqlConfig);
+    const result = await pool.request().query(`
+      SELECT
+        j.JobID,
+        j.JobTitle,
+        j.CategoryID,
+        j.SpecializationID,
+        j.Location,
+        j.JobType,
+        j.SalaryMin,
+        j.SalaryMax,
+        j.Experience,
+        j.EducationLevel,
+        j.VacancyCount,
+        j.CreatedAt,
+        j.ExpiresAt,
+        j.Status,
+        c.CompanyID,
+        c.CompanyName,
+        u.Email AS OwnerEmail,
+        u.DisplayName AS OwnerDisplayName,
+        cat.CategoryName,
+        sp.SpecializationName
+      FROM Jobs j
+      JOIN Companies c ON j.CompanyID = c.CompanyID
+      JOIN Users u ON c.OwnerUserID = u.FirebaseUserID
+      LEFT JOIN Categories cat ON j.CategoryID = cat.CategoryID
+      LEFT JOIN Specializations sp ON j.SpecializationID = sp.SpecializationID
+      WHERE j.Status = 0
+      ORDER BY j.ExpiresAt ASC, j.CreatedAt DESC
+    `);
+    return res.status(200).json(result.recordset);
+  } catch (error) {
+    console.error("Lỗi lấy danh sách bài chờ duyệt:", error);
+    return res.status(500).json({ message: "Lỗi server." });
+  }
+});
+
+router.get("/jobs/active", checkAuth, checkAdminRole, async (req, res) => {
+  try {
+    const pool = await sql.connect(sqlConfig);
+    const result = await pool.request().query(`
+      SELECT
+        j.JobID,
+        j.JobTitle,
+        j.CategoryID,
+        j.SpecializationID,
+        j.Location,
+        j.JobType,
+        j.SalaryMin,
+        j.SalaryMax,
+        j.Experience,
+        j.EducationLevel,
+        j.VacancyCount,
+        j.CreatedAt,
+        j.ExpiresAt,
+        j.Status,
+        c.CompanyID,
+        c.CompanyName,
+        cat.CategoryName,
+        sp.SpecializationName
+      FROM Jobs j
+      JOIN Companies c ON j.CompanyID = c.CompanyID
+      LEFT JOIN Categories cat ON j.CategoryID = cat.CategoryID
+      LEFT JOIN Specializations sp ON j.SpecializationID = sp.SpecializationID
+      WHERE j.Status = 1
+      ORDER BY j.ExpiresAt ASC, j.CreatedAt DESC
+    `);
+    return res.status(200).json(result.recordset);
+  } catch (error) {
+    console.error("Lỗi lấy danh sách bài đang tuyển:", error);
+    return res.status(500).json({ message: "Lỗi server." });
+  }
+});
+
+router.get("/jobs/:id", checkAuth, checkAdminRole, async (req, res) => {
+  const { id } = req.params;
+  if (!id || Number.isNaN(Number(id))) {
+    return res.status(400).json({ message: "JobID không hợp lệ." });
+  }
+
+  try {
+    const pool = await sql.connect(sqlConfig);
+    const workingTimesSubquery = await buildWorkingTimesSubquery(pool);
+    const result = await pool.request().input("JobID", sql.Int, Number(id))
+      .query(`
+        SELECT TOP 1
+          j.*,
+          ${workingTimesSubquery} AS WorkingTimes,
+          c.CompanyName,
+          c.CompanyEmail,
+          c.CompanyPhone,
+          c.WebsiteURL,
+          c.LogoURL,
+          c.Address AS CompanyAddress,
+          c.City AS CompanyCity,
+          c.Country AS CompanyCountry,
+          u.Email AS OwnerEmail,
+          u.DisplayName AS OwnerDisplayName,
+          cat.CategoryName,
+          sp.SpecializationName
+        FROM Jobs j
+        JOIN Companies c ON j.CompanyID = c.CompanyID
+        JOIN Users u ON c.OwnerUserID = u.FirebaseUserID
+        LEFT JOIN Categories cat ON j.CategoryID = cat.CategoryID
+        LEFT JOIN Specializations sp ON j.SpecializationID = sp.SpecializationID
+        WHERE j.JobID = @JobID
+      `);
+
+    const job = result.recordset?.[0];
+    if (!job) {
+      return res.status(404).json({ message: "Không tìm thấy bài đăng." });
+    }
+    return res.status(200).json(job);
+  } catch (error) {
+    console.error("Lỗi lấy chi tiết bài đăng:", error);
+    return res.status(500).json({ message: "Lỗi server." });
+  }
+});
+
+router.patch(
+  "/jobs/:id/approve",
+  checkAuth,
+  checkAdminRole,
+  async (req, res) => {
+    const { id } = req.params;
+    if (!id || Number.isNaN(Number(id))) {
+      return res.status(400).json({ message: "JobID không hợp lệ." });
+    }
+
+    try {
+      const pool = await sql.connect(sqlConfig);
+      const updateRes = await pool
+        .request()
+        .input("JobID", sql.Int, Number(id))
+        .query(
+          `
+        UPDATE Jobs
+        SET Status = 1, ApprovedAt = GETDATE()
+        WHERE JobID = @JobID AND Status = 0
+        `
+        );
+
+      const affected = updateRes?.rowsAffected?.[0] || 0;
+      if (affected === 0) {
+        return res.status(400).json({
+          message:
+            "Không thể duyệt (bài có thể đã được xử lý hoặc không ở trạng thái chờ duyệt).",
+        });
+      }
+      return res.status(200).json({ message: "Đã duyệt bài đăng." });
+    } catch (error) {
+      console.error("Lỗi duyệt bài đăng:", error);
+      return res.status(500).json({ message: "Lỗi server." });
+    }
+  }
+);
+
+router.patch(
+  "/jobs/:id/reject",
+  checkAuth,
+  checkAdminRole,
+  async (req, res) => {
+    const { id } = req.params;
+    if (!id || Number.isNaN(Number(id))) {
+      return res.status(400).json({ message: "JobID không hợp lệ." });
+    }
+
+    try {
+      const pool = await sql.connect(sqlConfig);
+      const updateRes = await pool
+        .request()
+        .input("JobID", sql.Int, Number(id))
+        .query(
+          `
+        UPDATE Jobs
+        SET Status = 4, ApprovedAt = NULL
+        WHERE JobID = @JobID AND Status = 0
+        `
+        );
+
+      const affected = updateRes?.rowsAffected?.[0] || 0;
+      if (affected === 0) {
+        return res.status(400).json({
+          message:
+            "Không thể từ chối (bài có thể đã được xử lý hoặc không ở trạng thái chờ duyệt).",
+        });
+      }
+      return res.status(200).json({ message: "Đã từ chối bài đăng." });
+    } catch (error) {
+      console.error("Lỗi từ chối bài đăng:", error);
+      return res.status(500).json({ message: "Lỗi server." });
     }
   }
 );
