@@ -111,6 +111,155 @@ router.get("/my-jobs", checkAuth, async (req, res) => {
   }
 });
 
+// Public-ish (authenticated) active jobs for homepage
+router.get("/active", checkAuth, async (req, res) => {
+  try {
+    const pool = await sql.connect(sqlConfig);
+    const result = await pool.request().query(`
+      SELECT
+        j.JobID,
+        j.JobTitle,
+        j.CategoryID,
+        j.SpecializationID,
+        j.Location,
+        j.JobType,
+        j.SalaryMin,
+        j.SalaryMax,
+        j.Experience,
+        j.EducationLevel,
+        j.VacancyCount,
+        j.CreatedAt,
+        j.ExpiresAt,
+        j.LastPushedAt,
+        j.Status,
+        c.CompanyID,
+        c.CompanyName,
+        cat.CategoryName,
+        sp.SpecializationName
+      FROM Jobs j
+      JOIN Companies c ON j.CompanyID = c.CompanyID
+      LEFT JOIN Categories cat ON j.CategoryID = cat.CategoryID
+      LEFT JOIN Specializations sp ON j.SpecializationID = sp.SpecializationID
+      WHERE j.Status = 1
+        AND (j.ExpiresAt IS NULL OR j.ExpiresAt > GETDATE())
+      ORDER BY j.LastPushedAt DESC, j.CreatedAt DESC
+    `);
+    return res.status(200).json(result.recordset);
+  } catch (error) {
+    console.error("Lỗi lấy danh sách job đang tuyển:", error);
+    return res.status(500).json({ message: "Lỗi server." });
+  }
+});
+
+router.post("/:id/apply", checkAuth, async (req, res) => {
+  const candidateId = req.firebaseUser.uid;
+  const jobId = Number(req.params.id);
+  const { cvId } = req.body || {};
+  const requestedCvId = cvId != null && cvId !== "" ? Number(cvId) : null;
+
+  if (!jobId || Number.isNaN(jobId)) {
+    return res.status(400).json({ message: "JobID không hợp lệ." });
+  }
+  if (requestedCvId != null && Number.isNaN(requestedCvId)) {
+    return res.status(400).json({ message: "CVID không hợp lệ." });
+  }
+
+  try {
+    const pool = await sql.connect(sqlConfig);
+
+    // Role check: candidate only
+    const roleRes = await pool
+      .request()
+      .input("UserID", sql.NVarChar, candidateId)
+      .query("SELECT TOP 1 RoleID FROM Users WHERE FirebaseUserID = @UserID");
+    const roleId = roleRes.recordset?.[0]?.RoleID ?? null;
+    if (Number(roleId) !== 4) {
+      return res.status(403).json({
+        message: "Chỉ ứng viên mới có thể ứng tuyển vào tin tuyển dụng.",
+      });
+    }
+
+    // Ensure job is active and not expired
+    const jobRes = await pool.request().input("JobID", sql.Int, jobId).query(`
+      SELECT TOP 1 JobID, Status, ExpiresAt
+      FROM Jobs
+      WHERE JobID = @JobID
+    `);
+    const job = jobRes.recordset?.[0];
+    if (!job) {
+      return res.status(404).json({ message: "Không tìm thấy tin tuyển dụng." });
+    }
+    if (Number(job.Status) !== 1) {
+      return res
+        .status(400)
+        .json({ message: "Tin tuyển dụng hiện không ở trạng thái đang tuyển." });
+    }
+    if (job.ExpiresAt && new Date(job.ExpiresAt).getTime() <= Date.now()) {
+      return res.status(400).json({ message: "Tin tuyển dụng đã hết hạn." });
+    }
+
+    // Pick CV: requested or default
+    let finalCvId = requestedCvId;
+    if (!finalCvId) {
+      const defCvRes = await pool
+        .request()
+        .input("UserID", sql.NVarChar, candidateId)
+        .query(
+          "SELECT TOP 1 CVID FROM CVs WHERE UserID = @UserID AND IsDefault = 1 ORDER BY CVID DESC"
+        );
+      finalCvId = defCvRes.recordset?.[0]?.CVID || null;
+    }
+
+    if (!finalCvId) {
+      return res.status(400).json({
+        message:
+          "Bạn chưa có CV mặc định. Vui lòng tải lên CV và đặt làm mặc định trước khi ứng tuyển.",
+      });
+    }
+
+    // Ensure CV belongs to candidate
+    const cvRes = await pool
+      .request()
+      .input("CVID", sql.Int, finalCvId)
+      .input("UserID", sql.NVarChar, candidateId)
+      .query("SELECT TOP 1 CVID FROM CVs WHERE CVID = @CVID AND UserID = @UserID");
+    if (!cvRes.recordset?.[0]) {
+      return res.status(403).json({ message: "Bạn không có quyền dùng CV này." });
+    }
+
+    // Prevent duplicate applications
+    const existsRes = await pool
+      .request()
+      .input("JobID", sql.Int, jobId)
+      .input("CandidateID", sql.NVarChar, candidateId)
+      .query(
+        "SELECT TOP 1 ApplicationID FROM Applications WHERE JobID = @JobID AND CandidateID = @CandidateID"
+      );
+    if (existsRes.recordset?.[0]) {
+      return res
+        .status(400)
+        .json({ message: "Bạn đã ứng tuyển vào công việc này rồi." });
+    }
+
+    await pool
+      .request()
+      .input("JobID", sql.Int, jobId)
+      .input("CandidateID", sql.NVarChar, candidateId)
+      .input("CVID", sql.Int, finalCvId)
+      .query(
+        `
+        INSERT INTO Applications (JobID, CandidateID, CVID, AppliedAt, CurrentStatus, StatusUpdatedAt)
+        VALUES (@JobID, @CandidateID, @CVID, GETDATE(), 0, GETDATE())
+        `
+      );
+
+    return res.status(201).json({ message: "Ứng tuyển thành công." });
+  } catch (error) {
+    console.error("Lỗi ứng tuyển:", error);
+    return res.status(500).json({ message: "Lỗi server." });
+  }
+});
+
 router.post("/", checkAuth, async (req, res) => {
   const employerId = req.firebaseUser.uid;
   const {

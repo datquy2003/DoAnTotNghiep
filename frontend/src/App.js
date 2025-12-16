@@ -27,9 +27,7 @@ import EmployerSubscription from "./pages/employer/EmployerSubscription";
 import PaymentResult from "./pages/PaymentResult";
 import ApplicantManagement from "./pages/employer/ApplicantManagement";
 import JobPostsManagement from "./pages/employer/JobPostsManagement";
-
-const HomeCandidate = () => <div>Trang chủ ỨNG VIÊN (Role 4)</div>;
-const HomeEmployer = () => <div>Trang chủ NHÀ TUYỂN DỤNG (Role 3)</div>;
+import HomeJobs from "./pages/HomeJobs";
 
 const AppliedJobs = () => <div>Trang Việc đã ứng tuyển</div>;
 const FavoriteJobs = () => <div>Trang Việc yêu thích</div>;
@@ -39,8 +37,8 @@ const Messages = () => <div>Trang Nhắn tin</div>;
 
 const RoleBasedHome = () => {
   const { appUser } = useAuth();
-  if (appUser?.RoleID === 4) return <HomeCandidate />;
-  if (appUser?.RoleID === 3) return <HomeEmployer />;
+  if (appUser?.RoleID === 4) return <HomeJobs />;
+  if (appUser?.RoleID === 3) return <HomeJobs />;
   if (appUser?.RoleID === 1 || appUser?.RoleID === 2) {
     return <Navigate to="/admin/users" replace />;
   }

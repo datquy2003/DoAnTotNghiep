@@ -7,14 +7,14 @@ import { formatDate } from "../utils/formatDate";
 
 import {
   FiBell,
-  FiMessageSquare,
+  // FiMessageSquare,
   FiChevronDown,
   FiEdit,
   FiLogOut,
   FiBriefcase,
   FiFileText,
-  FiHeart,
-  FiSlash,
+  // FiHeart,
+  // FiSlash,
   FiPackage,
   FiHome,
   FiClipboard,
@@ -260,14 +260,14 @@ const ProfileMenu = () => {
 
   return (
     <div className="flex items-center space-x-3">
-      {!isAdmin && (
+      {/* {!isAdmin && (
         <Link
           to="/messages"
           className="relative flex items-center justify-center w-8 h-8 text-gray-600 hover:text-blue-600"
         >
           <FiMessageSquare size={22} />
         </Link>
-      )}
+      )} */}
       {!isAdmin && <NotificationBell />}
 
       <div className="relative" ref={dropdownRef}>
@@ -350,12 +350,12 @@ const CandidateHeader = () => {
           <HeaderNavLink to="/candidate/applied-jobs">
             <FiBriefcase className="mr-1.5" /> Việc đã ứng tuyển
           </HeaderNavLink>
-          <HeaderNavLink to="/candidate/favorite-jobs">
+          {/* <HeaderNavLink to="/candidate/favorite-jobs">
             <FiHeart className="mr-1.5" /> Việc yêu thích
           </HeaderNavLink>
           <HeaderNavLink to="/candidate/blocked-companies">
             <FiSlash className="mr-1.5" /> Công ty đã chặn
-          </HeaderNavLink>
+          </HeaderNavLink> */}
           <HeaderNavLink to="/candidate/subscription">
             <FiPackage className="mr-1.5" /> Gói VIP
           </HeaderNavLink>
