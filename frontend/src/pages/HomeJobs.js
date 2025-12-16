@@ -52,10 +52,19 @@ export default function HomeJobs() {
 
   const handleApply = async (jobId) => {
     if (!isCandidate) return;
+    const already = (jobs || []).some(
+      (j) => Number(j?.JobID) === Number(jobId) && (j?.HasApplied === true || Number(j?.HasApplied) === 1)
+    );
+    if (already) return;
     setApplyingId(jobId);
     try {
       const res = await jobApi.applyToJob(jobId, {});
       toast.success(res?.data?.message || "Ứng tuyển thành công.");
+      setJobs((prev) =>
+        (prev || []).map((j) =>
+          Number(j?.JobID) === Number(jobId) ? { ...j, HasApplied: true } : j
+        )
+      );
     } catch (err) {
       console.error("Lỗi apply:", err);
       toast.error(err?.response?.data?.message || "Không thể ứng tuyển.");
@@ -107,7 +116,9 @@ export default function HomeJobs() {
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {sorted.map((j) => {
-            const disabled = isEmployer || !isCandidate || applyingId === j.JobID;
+            const hasApplied = j?.HasApplied === true || Number(j?.HasApplied) === 1;
+            const disabled =
+              isEmployer || !isCandidate || applyingId === j.JobID || hasApplied;
             return (
               <div
                 key={j.JobID}
@@ -157,11 +168,19 @@ export default function HomeJobs() {
                         ? "Nhà tuyển dụng không thể ứng tuyển"
                         : !isCandidate
                         ? "Chỉ ứng viên mới có thể ứng tuyển"
+                        : hasApplied
+                        ? "Bạn đã ứng tuyển công việc này"
                         : ""
                     }
                   >
                     <FiSend className="w-4 h-4" />
-                    <span>{applyingId === j.JobID ? "Đang gửi..." : "Ứng tuyển"}</span>
+                    <span>
+                      {applyingId === j.JobID
+                        ? "Đang gửi..."
+                        : hasApplied
+                        ? "Đã ứng tuyển"
+                        : "Ứng tuyển"}
+                    </span>
                   </button>
                 </div>
               </div>

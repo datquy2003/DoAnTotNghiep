@@ -136,11 +136,6 @@ const JobManagement = () => {
                   <tr key={j.JobID} className="hover:bg-gray-50">
                     <td className="px-4 py-3 text-sm font-semibold text-gray-900">
                       <div className="line-clamp-2">{j.JobTitle}</div>
-                      {j.Location ? (
-                        <div className="mt-1 text-xs text-gray-600 line-clamp-1">
-                          {j.Location}
-                        </div>
-                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-700">
                       {j.CompanyName || "—"}

@@ -98,11 +98,22 @@ router.get("/my-jobs", checkAuth, async (req, res) => {
         SELECT 
           j.*, 
           c.CompanyName,
+          (SELECT COUNT(*) FROM Applications a WHERE a.JobID = j.JobID) AS TotalApplicants,
           ${workingTimesSubquery} AS WorkingTimes
         FROM Jobs j
         JOIN Companies c ON j.CompanyID = c.CompanyID
         WHERE c.OwnerUserID = @OwnerUserID
-        ORDER BY j.LastPushedAt DESC, j.CreatedAt DESC
+        ORDER BY
+          COALESCE(
+            CASE
+              WHEN j.LastPushedAt IS NULL THEN j.ApprovedAt
+              WHEN j.ApprovedAt IS NULL THEN j.LastPushedAt
+              WHEN j.LastPushedAt >= j.ApprovedAt THEN j.LastPushedAt
+              ELSE j.ApprovedAt
+            END,
+            j.CreatedAt
+          ) DESC,
+          j.CreatedAt DESC
       `);
     res.status(200).json(result.recordset);
   } catch (error) {
@@ -111,11 +122,166 @@ router.get("/my-jobs", checkAuth, async (req, res) => {
   }
 });
 
-// Public-ish (authenticated) active jobs for homepage
+router.get("/applied", checkAuth, async (req, res) => {
+  const candidateId = req.firebaseUser.uid;
+  try {
+    const pool = await sql.connect(sqlConfig);
+
+    const roleRes = await pool
+      .request()
+      .input("UserID", sql.NVarChar, candidateId)
+      .query("SELECT TOP 1 RoleID FROM Users WHERE FirebaseUserID = @UserID");
+    const roleId = roleRes.recordset?.[0]?.RoleID ?? null;
+    if (Number(roleId) !== 4) {
+      return res.status(403).json({
+        message: "Chỉ ứng viên mới có thể xem danh sách đã ứng tuyển.",
+      });
+    }
+
+    const result = await pool
+      .request()
+      .input("CandidateID", sql.NVarChar, candidateId).query(`
+        SELECT
+          a.ApplicationID,
+          a.AppliedAt,
+          a.CurrentStatus,
+          a.StatusUpdatedAt,
+          a.CVID,
+          cv.CVName,
+          cv.CVFileUrl,
+          j.JobID,
+          j.JobTitle,
+          j.Location,
+          j.SalaryMin,
+          j.SalaryMax,
+          j.Experience,
+          j.CreatedAt,
+          j.ApprovedAt,
+          j.LastPushedAt,
+          j.ExpiresAt,
+          j.Status AS JobStatus,
+          c.CompanyID,
+          c.CompanyName,
+          sp.SpecializationName
+        FROM Applications a
+        JOIN Jobs j ON j.JobID = a.JobID
+        JOIN Companies c ON c.CompanyID = j.CompanyID
+        LEFT JOIN Specializations sp ON sp.SpecializationID = j.SpecializationID
+        LEFT JOIN CVs cv ON cv.CVID = a.CVID
+        WHERE a.CandidateID = @CandidateID
+        ORDER BY a.AppliedAt DESC, a.ApplicationID DESC
+      `);
+
+    return res.status(200).json(result.recordset || []);
+  } catch (error) {
+    console.error("Lỗi GET /jobs/applied:", error);
+    return res.status(500).json({ message: "Lỗi server." });
+  }
+});
+
+router.get("/:id/applicants", checkAuth, async (req, res) => {
+  const employerId = req.firebaseUser.uid;
+  const jobId = Number(req.params.id);
+  if (!jobId || Number.isNaN(jobId)) {
+    return res.status(400).json({ message: "JobID không hợp lệ." });
+  }
+
+  try {
+    const pool = await sql.connect(sqlConfig);
+
+    const roleRes = await pool
+      .request()
+      .input("UserID", sql.NVarChar, employerId)
+      .query("SELECT TOP 1 RoleID FROM Users WHERE FirebaseUserID = @UserID");
+    const roleId = roleRes.recordset?.[0]?.RoleID ?? null;
+    if (Number(roleId) !== 3) {
+      return res.status(403).json({
+        message: "Bạn không có quyền xem danh sách ứng viên của bài đăng.",
+      });
+    }
+
+    const ownRes = await pool
+      .request()
+      .input("JobID", sql.Int, jobId)
+      .input("EmployerID", sql.NVarChar, employerId).query(`
+        SELECT TOP 1 j.JobID, j.JobTitle
+        FROM Jobs j
+        JOIN Companies c ON j.CompanyID = c.CompanyID
+        WHERE j.JobID = @JobID AND c.OwnerUserID = @EmployerID
+      `);
+
+    const job = ownRes.recordset?.[0];
+    if (!job) {
+      return res.status(404).json({
+        message: "Không tìm thấy bài đăng hoặc bạn không có quyền truy cập.",
+      });
+    }
+
+    const result = await pool.request().input("JobID", sql.Int, jobId).query(`
+        SELECT
+          a.ApplicationID,
+          a.AppliedAt,
+          a.CurrentStatus,
+          a.StatusUpdatedAt,
+          a.CandidateID,
+          u.Email AS CandidateEmail,
+          cp.FullName,
+          cp.Birthday,
+          cp.City,
+          cp.Country,
+          cp.ProfileSummary,
+          cp.PhoneNumber,
+          cv.CVID,
+          cv.CVName,
+          cv.CVFileUrl
+        FROM Applications a
+        JOIN Users u ON u.FirebaseUserID = a.CandidateID
+        LEFT JOIN CandidateProfiles cp ON cp.UserID = a.CandidateID
+        LEFT JOIN CVs cv ON cv.CVID = a.CVID
+        WHERE a.JobID = @JobID
+        ORDER BY a.AppliedAt DESC, a.ApplicationID DESC
+      `);
+
+    const applicants = (result.recordset || []).map((row) => ({
+      applicationId: row.ApplicationID,
+      appliedAt: row.AppliedAt,
+      currentStatus: row.CurrentStatus,
+      statusUpdatedAt: row.StatusUpdatedAt,
+      candidateId: row.CandidateID,
+      candidateEmail: row.CandidateEmail,
+      fullName: row.FullName,
+      birthday: row.Birthday,
+      city: row.City,
+      country: row.Country,
+      profileSummary: row.ProfileSummary,
+      phoneNumber: row.PhoneNumber || null,
+      cv: row.CVID
+        ? {
+            id: row.CVID,
+            name: row.CVName,
+            url: row.CVFileUrl,
+          }
+        : null,
+    }));
+
+    return res.status(200).json({
+      jobId,
+      jobTitle: job.JobTitle || "",
+      total: applicants.length,
+      applicants,
+    });
+  } catch (error) {
+    console.error("Lỗi GET /jobs/:id/applicants:", error);
+    return res.status(500).json({ message: "Lỗi server." });
+  }
+});
+
 router.get("/active", checkAuth, async (req, res) => {
   try {
     const pool = await sql.connect(sqlConfig);
-    const result = await pool.request().query(`
+    const userId = req.firebaseUser.uid;
+    const result = await pool.request().input("UserID", sql.NVarChar, userId)
+      .query(`
       SELECT
         j.JobID,
         j.JobTitle,
@@ -135,7 +301,11 @@ router.get("/active", checkAuth, async (req, res) => {
         c.CompanyID,
         c.CompanyName,
         cat.CategoryName,
-        sp.SpecializationName
+        sp.SpecializationName,
+        CASE WHEN EXISTS (
+          SELECT 1 FROM Applications a
+          WHERE a.JobID = j.JobID AND a.CandidateID = @UserID
+        ) THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS HasApplied
       FROM Jobs j
       JOIN Companies c ON j.CompanyID = c.CompanyID
       LEFT JOIN Categories cat ON j.CategoryID = cat.CategoryID
@@ -167,7 +337,6 @@ router.post("/:id/apply", checkAuth, async (req, res) => {
   try {
     const pool = await sql.connect(sqlConfig);
 
-    // Role check: candidate only
     const roleRes = await pool
       .request()
       .input("UserID", sql.NVarChar, candidateId)
@@ -179,7 +348,6 @@ router.post("/:id/apply", checkAuth, async (req, res) => {
       });
     }
 
-    // Ensure job is active and not expired
     const jobRes = await pool.request().input("JobID", sql.Int, jobId).query(`
       SELECT TOP 1 JobID, Status, ExpiresAt
       FROM Jobs
@@ -187,18 +355,19 @@ router.post("/:id/apply", checkAuth, async (req, res) => {
     `);
     const job = jobRes.recordset?.[0];
     if (!job) {
-      return res.status(404).json({ message: "Không tìm thấy tin tuyển dụng." });
+      return res
+        .status(404)
+        .json({ message: "Không tìm thấy tin tuyển dụng." });
     }
     if (Number(job.Status) !== 1) {
-      return res
-        .status(400)
-        .json({ message: "Tin tuyển dụng hiện không ở trạng thái đang tuyển." });
+      return res.status(400).json({
+        message: "Tin tuyển dụng hiện không ở trạng thái đang tuyển.",
+      });
     }
     if (job.ExpiresAt && new Date(job.ExpiresAt).getTime() <= Date.now()) {
       return res.status(400).json({ message: "Tin tuyển dụng đã hết hạn." });
     }
 
-    // Pick CV: requested or default
     let finalCvId = requestedCvId;
     if (!finalCvId) {
       const defCvRes = await pool
@@ -217,17 +386,19 @@ router.post("/:id/apply", checkAuth, async (req, res) => {
       });
     }
 
-    // Ensure CV belongs to candidate
     const cvRes = await pool
       .request()
       .input("CVID", sql.Int, finalCvId)
       .input("UserID", sql.NVarChar, candidateId)
-      .query("SELECT TOP 1 CVID FROM CVs WHERE CVID = @CVID AND UserID = @UserID");
+      .query(
+        "SELECT TOP 1 CVID FROM CVs WHERE CVID = @CVID AND UserID = @UserID"
+      );
     if (!cvRes.recordset?.[0]) {
-      return res.status(403).json({ message: "Bạn không có quyền dùng CV này." });
+      return res
+        .status(403)
+        .json({ message: "Bạn không có quyền dùng CV này." });
     }
 
-    // Prevent duplicate applications
     const existsRes = await pool
       .request()
       .input("JobID", sql.Int, jobId)

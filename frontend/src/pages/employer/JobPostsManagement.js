@@ -21,6 +21,7 @@ import { formatDate } from "../../utils/formatDate";
 import JobPostAddEditModal from "./components/JobPostAddEditModal";
 import JobPostDetailModal from "./components/JobPostDetailModal";
 import ConfirmationModal from "../../components/modals/ConfirmationModal";
+import JobApplicantsModal from "./components/JobApplicantsModal";
 
 const JobPostsManagement = () => {
   const [jobs, setJobs] = useState([]);
@@ -34,6 +35,7 @@ const JobPostsManagement = () => {
   const [editModalResetKey, setEditModalResetKey] = useState(0);
   const [editJob, setEditJob] = useState(null);
   const [detailJob, setDetailJob] = useState(null);
+  const [applicantsJob, setApplicantsJob] = useState(null);
   const [specMap, setSpecMap] = useState({});
   const [categories, setCategories] = useState([]);
   const [specializations, setSpecializations] = useState([]);
@@ -158,10 +160,20 @@ const JobPostsManagement = () => {
         : Array.isArray(res)
         ? res
         : [];
+      const toTime = (v) => {
+        const t = new Date(v).getTime();
+        return Number.isNaN(t) ? 0 : t;
+      };
+      const activityTime = (job) => {
+        const approvedAt = toTime(job?.ApprovedAt);
+        const lastPushedAt = toTime(job?.LastPushedAt);
+        const createdAt = toTime(job?.CreatedAt);
+        return Math.max(approvedAt, lastPushedAt, createdAt);
+      };
       const sorted = [...list].sort((a, b) => {
-        const dateA = a.CreatedAt ? new Date(a.CreatedAt) : new Date(0);
-        const dateB = b.CreatedAt ? new Date(b.CreatedAt) : new Date(0);
-        return dateB - dateA;
+        const diff = activityTime(b) - activityTime(a);
+        if (diff !== 0) return diff;
+        return toTime(b?.CreatedAt) - toTime(a?.CreatedAt);
       });
       setJobs(sorted);
     } catch (error) {
@@ -790,9 +802,7 @@ const JobPostsManagement = () => {
                             </button>
                             <button
                               title="Ứng viên đã ứng tuyển"
-                              onClick={() =>
-                                toast("Danh sách ứng viên sẽ được bổ sung sau.")
-                              }
+                              onClick={() => setApplicantsJob(job)}
                               disabled={job.Status === 0 || job.Status === 4}
                               className={`text-blue-600 hover:text-gray-900 ${
                                 job.Status === 0 || job.Status === 4
@@ -997,6 +1007,12 @@ const JobPostsManagement = () => {
         categories={categories}
         specMap={specMap}
         onClose={() => setDetailJob(null)}
+      />
+
+      <JobApplicantsModal
+        open={!!applicantsJob}
+        job={applicantsJob}
+        onClose={() => setApplicantsJob(null)}
       />
 
       <ConfirmationModal

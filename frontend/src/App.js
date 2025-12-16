@@ -28,8 +28,8 @@ import PaymentResult from "./pages/PaymentResult";
 import ApplicantManagement from "./pages/employer/ApplicantManagement";
 import JobPostsManagement from "./pages/employer/JobPostsManagement";
 import HomeJobs from "./pages/HomeJobs";
+import AppliedJobs from "./pages/candidate/AppliedJobs";
 
-const AppliedJobs = () => <div>Trang Việc đã ứng tuyển</div>;
 const FavoriteJobs = () => <div>Trang Việc yêu thích</div>;
 const BlockedCompanies = () => <div>Trang Công ty đã chặn</div>;
 

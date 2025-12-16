@@ -5,6 +5,8 @@ const createJob = (data) => apiClient.post("/jobs", data);
 const updateJob = (jobId, data) => apiClient.patch(`/jobs/${jobId}`, data);
 const getActiveJobs = () => apiClient.get("/jobs/active");
 const applyToJob = (jobId, data) => apiClient.post(`/jobs/${jobId}/apply`, data);
+const getJobApplicants = (jobId) => apiClient.get(`/jobs/${jobId}/applicants`);
+const getAppliedJobs = () => apiClient.get("/jobs/applied");
 const pushTop = (jobId) => apiClient.post(`/jobs/${jobId}/push-top`);
 const closeJob = (jobId) => apiClient.patch(`/jobs/${jobId}/close`);
 const reopenJob = (jobId) => apiClient.patch(`/jobs/${jobId}/reopen`);
@@ -17,6 +19,8 @@ export const jobApi = {
   updateJob,
   getActiveJobs,
   applyToJob,
+  getJobApplicants,
+  getAppliedJobs,
   pushTop,
   closeJob,
   reopenJob,
