@@ -48,6 +48,655 @@ const checkSuperAdminRole = async (req, res, next) => {
   }
 };
 
+router.get("/reports/revenue", checkAuth, checkAdminRole, async (req, res) => {
+  try {
+    const pool = await sql.connect(sqlConfig);
+
+    const rangeRaw = String(req.query?.range || "1m").toLowerCase();
+    const range = ["day", "1m", "3m", "6m", "year"].includes(rangeRaw)
+      ? rangeRaw
+      : "1m";
+
+    const nowRes = await pool.request().query("SELECT GETDATE() AS Now");
+    const now = nowRes.recordset?.[0]?.Now
+      ? new Date(nowRes.recordset[0].Now)
+      : new Date();
+    const currentYear = now.getFullYear();
+    const yearParam = Number(req.query?.year);
+    const year = Number.isFinite(yearParam) ? yearParam : currentYear;
+
+    let startDate = new Date(now);
+    let endDate = new Date(now);
+    let granularity = "day";
+
+    if (range === "day") {
+      startDate.setDate(startDate.getDate() - 6);
+    } else if (range === "1m") {
+      startDate.setDate(startDate.getDate() - 30);
+    } else if (range === "3m") {
+      startDate.setDate(startDate.getDate() - 90);
+    } else if (range === "6m") {
+      startDate.setDate(startDate.getDate() - 180);
+    } else if (range === "year") {
+      granularity = "month";
+      startDate.setTime(new Date(year, 0, 1, 0, 0, 0, 0).getTime());
+      const endOfYear = new Date(year, 11, 31, 23, 59, 59, 999);
+      endDate.setTime(
+        year === currentYear
+          ? Math.min(now.getTime(), endOfYear.getTime())
+          : endOfYear.getTime()
+      );
+    }
+
+    if (granularity !== "month") {
+      startDate = new Date(
+        startDate.getFullYear(),
+        startDate.getMonth(),
+        startDate.getDate(),
+        0,
+        0,
+        0,
+        0
+      );
+      endDate = new Date(
+        endDate.getFullYear(),
+        endDate.getMonth(),
+        endDate.getDate(),
+        0,
+        0,
+        0,
+        0
+      );
+    }
+
+    const endExclusive = new Date(endDate);
+    if (granularity !== "month") {
+      endExclusive.setDate(endExclusive.getDate() + 1);
+    } else {
+      endExclusive.setMilliseconds(endExclusive.getMilliseconds() + 1);
+    }
+
+    const baseWhere = `
+      us.Status = 1
+      AND us.StartDate >= @StartDate
+      AND us.StartDate < @EndDate
+    `;
+
+    let barRows = [];
+    if (granularity === "month") {
+      const barRes = await pool
+        .request()
+        .input("StartDate", sql.DateTime, startDate)
+        .input("EndDate", sql.DateTime, endExclusive).query(`
+          SELECT
+            YEAR(us.StartDate) AS YearNum,
+            MONTH(us.StartDate) AS MonthNum,
+            SUM(CAST(ISNULL(us.SnapshotPrice, sp.Price) AS DECIMAL(18,2))) AS Total
+          FROM UserSubscriptions us
+          LEFT JOIN SubscriptionPlans sp ON us.PlanID = sp.PlanID
+          WHERE ${baseWhere}
+          GROUP BY YEAR(us.StartDate), MONTH(us.StartDate)
+          ORDER BY YearNum ASC, MonthNum ASC
+        `);
+      barRows = barRes.recordset || [];
+    } else {
+      const barRes = await pool
+        .request()
+        .input("StartDate", sql.DateTime, startDate)
+        .input("EndDate", sql.DateTime, endExclusive).query(`
+          SELECT
+            CONVERT(date, us.StartDate) AS DayKey,
+            SUM(CAST(ISNULL(us.SnapshotPrice, sp.Price) AS DECIMAL(18,2))) AS Total
+          FROM UserSubscriptions us
+          LEFT JOIN SubscriptionPlans sp ON us.PlanID = sp.PlanID
+          WHERE ${baseWhere}
+          GROUP BY CONVERT(date, us.StartDate)
+          ORDER BY DayKey ASC
+        `);
+      barRows = barRes.recordset || [];
+    }
+
+    const pieRes = await pool
+      .request()
+      .input("StartDate", sql.DateTime, startDate)
+      .input("EndDate", sql.DateTime, endExclusive).query(`
+        SELECT TOP 20
+          ISNULL(us.SnapshotPlanName, sp.PlanName) AS PlanName,
+          SUM(CAST(ISNULL(us.SnapshotPrice, sp.Price) AS DECIMAL(18,2))) AS Total
+        FROM UserSubscriptions us
+        LEFT JOIN SubscriptionPlans sp ON us.PlanID = sp.PlanID
+        WHERE ${baseWhere}
+        GROUP BY ISNULL(us.SnapshotPlanName, sp.PlanName)
+        ORDER BY Total DESC
+      `);
+
+    const totalRes = await pool
+      .request()
+      .input("StartDate", sql.DateTime, startDate)
+      .input("EndDate", sql.DateTime, endExclusive).query(`
+        SELECT
+          SUM(CAST(ISNULL(us.SnapshotPrice, sp.Price) AS DECIMAL(18,2))) AS TotalRevenue
+        FROM UserSubscriptions us
+        LEFT JOIN SubscriptionPlans sp ON us.PlanID = sp.PlanID
+        WHERE ${baseWhere}
+      `);
+
+    const totalRevenue = Number(totalRes.recordset?.[0]?.TotalRevenue || 0);
+
+    let bar = [];
+    if (granularity === "month") {
+      const map = new Map(
+        barRows.map((r) => [
+          `${r.YearNum}-${String(r.MonthNum).padStart(2, "0")}`,
+          Number(r.Total || 0),
+        ])
+      );
+      bar = Array.from({ length: 12 }, (_, i) => {
+        const m = i + 1;
+        const label = `${year}-${String(m).padStart(2, "0")}`;
+        return { label, total: map.get(label) || 0 };
+      });
+    } else {
+      const map = new Map(
+        barRows.map((r) => {
+          const d = r.DayKey instanceof Date ? r.DayKey : new Date(r.DayKey);
+          const label = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+            2,
+            "0"
+          )}-${String(d.getDate()).padStart(2, "0")}`;
+          return [label, Number(r.Total || 0)];
+        })
+      );
+
+      const cursor = new Date(
+        startDate.getFullYear(),
+        startDate.getMonth(),
+        startDate.getDate(),
+        0,
+        0,
+        0,
+        0
+      );
+      const endCursor = new Date(
+        endDate.getFullYear(),
+        endDate.getMonth(),
+        endDate.getDate(),
+        0,
+        0,
+        0,
+        0
+      );
+
+      while (cursor.getTime() <= endCursor.getTime()) {
+        const label = `${cursor.getFullYear()}-${String(
+          cursor.getMonth() + 1
+        ).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`;
+        bar.push({ label, total: map.get(label) || 0 });
+        cursor.setDate(cursor.getDate() + 1);
+      }
+    }
+
+    const pie = (pieRes.recordset || []).map((r) => ({
+      name: r.PlanName || "Không rõ",
+      value: Number(r.Total || 0),
+    }));
+
+    return res.status(200).json({
+      range,
+      year,
+      granularity,
+      startDate,
+      endDate,
+      totalRevenue,
+      currency: "VND",
+      bar,
+      pie,
+    });
+  } catch (error) {
+    console.error("Lỗi GET /admin/reports/revenue:", error);
+    return res.status(500).json({ message: "Lỗi server." });
+  }
+});
+
+router.get(
+  "/reports/new-users",
+  checkAuth,
+  checkAdminRole,
+  async (req, res) => {
+    try {
+      const pool = await sql.connect(sqlConfig);
+
+      const rangeRaw = String(req.query?.range || "1m").toLowerCase();
+      const range = ["day", "1m", "3m", "6m", "year"].includes(rangeRaw)
+        ? rangeRaw
+        : "1m";
+
+      const nowRes = await pool.request().query("SELECT GETDATE() AS Now");
+      const now = nowRes.recordset?.[0]?.Now
+        ? new Date(nowRes.recordset[0].Now)
+        : new Date();
+      const currentYear = now.getFullYear();
+      const yearParam = Number(req.query?.year);
+      const year = Number.isFinite(yearParam) ? yearParam : currentYear;
+
+      let startDate = new Date(now);
+      let endDate = new Date(now);
+      let granularity = "day";
+
+      if (range === "day") {
+        startDate.setDate(startDate.getDate() - 6);
+      } else if (range === "1m") {
+        startDate.setDate(startDate.getDate() - 30);
+      } else if (range === "3m") {
+        startDate.setDate(startDate.getDate() - 90);
+      } else if (range === "6m") {
+        startDate.setDate(startDate.getDate() - 180);
+      } else if (range === "year") {
+        granularity = "month";
+        startDate.setTime(new Date(year, 0, 1, 0, 0, 0, 0).getTime());
+        const endOfYear = new Date(year, 11, 31, 23, 59, 59, 999);
+        endDate.setTime(
+          year === currentYear
+            ? Math.min(now.getTime(), endOfYear.getTime())
+            : endOfYear.getTime()
+        );
+      }
+
+      if (granularity !== "month") {
+        startDate = new Date(
+          startDate.getFullYear(),
+          startDate.getMonth(),
+          startDate.getDate(),
+          0,
+          0,
+          0,
+          0
+        );
+        endDate = new Date(
+          endDate.getFullYear(),
+          endDate.getMonth(),
+          endDate.getDate(),
+          0,
+          0,
+          0,
+          0
+        );
+      }
+
+      const endExclusive = new Date(endDate);
+      if (granularity !== "month") {
+        endExclusive.setDate(endExclusive.getDate() + 1);
+      } else {
+        endExclusive.setMilliseconds(endExclusive.getMilliseconds() + 1);
+      }
+
+      const baseWhere = `
+      u.CreatedAt >= @StartDate
+      AND u.CreatedAt < @EndDate
+      AND (u.RoleID IN (3, 4) OR u.RoleID IS NULL)
+    `;
+
+      let barRows = [];
+      if (granularity === "month") {
+        const barRes = await pool
+          .request()
+          .input("StartDate", sql.DateTime, startDate)
+          .input("EndDate", sql.DateTime, endExclusive).query(`
+          SELECT
+            YEAR(u.CreatedAt) AS YearNum,
+            MONTH(u.CreatedAt) AS MonthNum,
+            COUNT(*) AS Total
+          FROM Users u
+          WHERE ${baseWhere}
+          GROUP BY YEAR(u.CreatedAt), MONTH(u.CreatedAt)
+          ORDER BY YearNum ASC, MonthNum ASC
+        `);
+        barRows = barRes.recordset || [];
+      } else {
+        const barRes = await pool
+          .request()
+          .input("StartDate", sql.DateTime, startDate)
+          .input("EndDate", sql.DateTime, endExclusive).query(`
+          SELECT
+            CONVERT(date, u.CreatedAt) AS DayKey,
+            COUNT(*) AS Total
+          FROM Users u
+          WHERE ${baseWhere}
+          GROUP BY CONVERT(date, u.CreatedAt)
+          ORDER BY DayKey ASC
+        `);
+        barRows = barRes.recordset || [];
+      }
+
+      const pieRes = await pool
+        .request()
+        .input("StartDate", sql.DateTime, startDate)
+        .input("EndDate", sql.DateTime, endExclusive).query(`
+        SELECT
+          ISNULL(u.RoleID, 0) AS RoleID,
+          COUNT(*) AS Total
+        FROM Users u
+        WHERE ${baseWhere}
+        GROUP BY ISNULL(u.RoleID, 0)
+        ORDER BY Total DESC
+      `);
+
+      const totalRes = await pool
+        .request()
+        .input("StartDate", sql.DateTime, startDate)
+        .input("EndDate", sql.DateTime, endExclusive).query(`
+        SELECT COUNT(*) AS TotalNewUsers
+        FROM Users u
+        WHERE ${baseWhere}
+      `);
+
+      const totalNewUsers = Number(totalRes.recordset?.[0]?.TotalNewUsers || 0);
+
+      let bar = [];
+      if (granularity === "month") {
+        const map = new Map(
+          barRows.map((r) => [
+            `${r.YearNum}-${String(r.MonthNum).padStart(2, "0")}`,
+            Number(r.Total || 0),
+          ])
+        );
+        bar = Array.from({ length: 12 }, (_, i) => {
+          const m = i + 1;
+          const label = `${year}-${String(m).padStart(2, "0")}`;
+          return { label, total: map.get(label) || 0 };
+        });
+      } else {
+        const map = new Map(
+          barRows.map((r) => {
+            const d = r.DayKey instanceof Date ? r.DayKey : new Date(r.DayKey);
+            const label = `${d.getFullYear()}-${String(
+              d.getMonth() + 1
+            ).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+            return [label, Number(r.Total || 0)];
+          })
+        );
+
+        const cursor = new Date(
+          startDate.getFullYear(),
+          startDate.getMonth(),
+          startDate.getDate(),
+          0,
+          0,
+          0,
+          0
+        );
+        const endCursor = new Date(
+          endDate.getFullYear(),
+          endDate.getMonth(),
+          endDate.getDate(),
+          0,
+          0,
+          0,
+          0
+        );
+
+        while (cursor.getTime() <= endCursor.getTime()) {
+          const label = `${cursor.getFullYear()}-${String(
+            cursor.getMonth() + 1
+          ).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`;
+          bar.push({ label, total: map.get(label) || 0 });
+          cursor.setDate(cursor.getDate() + 1);
+        }
+      }
+
+      const pie = (pieRes.recordset || []).map((r) => ({
+        roleId: Number(r.RoleID || 0),
+        value: Number(r.Total || 0),
+      }));
+
+      return res.status(200).json({
+        range,
+        year,
+        granularity,
+        startDate,
+        endDate,
+        totalNewUsers,
+        bar,
+        pie,
+      });
+    } catch (error) {
+      console.error("Lỗi GET /admin/reports/new-users:", error);
+      return res.status(500).json({ message: "Lỗi server." });
+    }
+  }
+);
+
+router.get(
+  "/reports/new-posts",
+  checkAuth,
+  checkAdminRole,
+  async (req, res) => {
+    try {
+      const pool = await sql.connect(sqlConfig);
+
+      const rangeRaw = String(req.query?.range || "1m").toLowerCase();
+      const range = ["day", "1m", "3m", "6m", "year"].includes(rangeRaw)
+        ? rangeRaw
+        : "1m";
+
+      const nowRes = await pool.request().query("SELECT GETDATE() AS Now");
+      const now = nowRes.recordset?.[0]?.Now
+        ? new Date(nowRes.recordset[0].Now)
+        : new Date();
+
+      const currentYear = now.getFullYear();
+      const yearParam = Number(req.query?.year);
+      const year = Number.isFinite(yearParam) ? yearParam : currentYear;
+
+      let startDate = new Date(now);
+      let endDate = new Date(now);
+      let granularity = "day";
+
+      if (range === "day") {
+        startDate.setDate(startDate.getDate() - 6);
+      } else if (range === "1m") {
+        startDate.setDate(startDate.getDate() - 30);
+      } else if (range === "3m") {
+        startDate.setDate(startDate.getDate() - 90);
+      } else if (range === "6m") {
+        startDate.setDate(startDate.getDate() - 180);
+      } else if (range === "year") {
+        granularity = "month";
+        startDate.setTime(new Date(year, 0, 1, 0, 0, 0, 0).getTime());
+        const endOfYear = new Date(year, 11, 31, 23, 59, 59, 999);
+        endDate.setTime(
+          year === currentYear
+            ? Math.min(now.getTime(), endOfYear.getTime())
+            : endOfYear.getTime()
+        );
+      }
+
+      if (granularity !== "month") {
+        startDate = new Date(
+          startDate.getFullYear(),
+          startDate.getMonth(),
+          startDate.getDate(),
+          0,
+          0,
+          0,
+          0
+        );
+        endDate = new Date(
+          endDate.getFullYear(),
+          endDate.getMonth(),
+          endDate.getDate(),
+          0,
+          0,
+          0,
+          0
+        );
+      }
+
+      const endExclusive = new Date(endDate);
+      if (granularity !== "month") {
+        endExclusive.setDate(endExclusive.getDate() + 1);
+      } else {
+        endExclusive.setMilliseconds(endExclusive.getMilliseconds() + 1);
+      }
+
+      const baseWhere = `
+        j.ApprovedAt IS NOT NULL
+        AND j.ApprovedAt >= @StartDate
+        AND j.ApprovedAt < @EndDate
+        AND j.Status = 1
+      `;
+
+      let barRows = [];
+      if (granularity === "month") {
+        const barRes = await pool
+          .request()
+          .input("StartDate", sql.DateTime, startDate)
+          .input("EndDate", sql.DateTime, endExclusive).query(`
+            SELECT
+              YEAR(j.ApprovedAt) AS YearNum,
+              MONTH(j.ApprovedAt) AS MonthNum,
+              COUNT(*) AS Total
+            FROM Jobs j
+            WHERE ${baseWhere}
+            GROUP BY YEAR(j.ApprovedAt), MONTH(j.ApprovedAt)
+            ORDER BY YearNum ASC, MonthNum ASC
+          `);
+        barRows = barRes.recordset || [];
+      } else {
+        const barRes = await pool
+          .request()
+          .input("StartDate", sql.DateTime, startDate)
+          .input("EndDate", sql.DateTime, endExclusive).query(`
+            SELECT
+              CONVERT(date, j.ApprovedAt) AS DayKey,
+              COUNT(*) AS Total
+            FROM Jobs j
+            WHERE ${baseWhere}
+            GROUP BY CONVERT(date, j.ApprovedAt)
+            ORDER BY DayKey ASC
+          `);
+        barRows = barRes.recordset || [];
+      }
+
+      const pieCategoryRes = await pool
+        .request()
+        .input("StartDate", sql.DateTime, startDate)
+        .input("EndDate", sql.DateTime, endExclusive).query(`
+          SELECT TOP 10
+            ISNULL(cat.CategoryName, N'Chưa chọn') AS CategoryName,
+            COUNT(*) AS Total
+          FROM Jobs j
+          LEFT JOIN Categories cat ON j.CategoryID = cat.CategoryID
+          WHERE ${baseWhere}
+          GROUP BY ISNULL(cat.CategoryName, N'Chưa chọn')
+          ORDER BY Total DESC
+        `);
+
+      const pieSpecRes = await pool
+        .request()
+        .input("StartDate", sql.DateTime, startDate)
+        .input("EndDate", sql.DateTime, endExclusive).query(`
+          SELECT TOP 10
+            ISNULL(sp.SpecializationName, N'Chưa chọn') AS SpecializationName,
+            COUNT(*) AS Total
+          FROM Jobs j
+          LEFT JOIN Specializations sp ON j.SpecializationID = sp.SpecializationID
+          WHERE ${baseWhere}
+          GROUP BY ISNULL(sp.SpecializationName, N'Chưa chọn')
+          ORDER BY Total DESC
+        `);
+
+      const totalRes = await pool
+        .request()
+        .input("StartDate", sql.DateTime, startDate)
+        .input("EndDate", sql.DateTime, endExclusive).query(`
+          SELECT COUNT(*) AS TotalNewPosts
+          FROM Jobs j
+          WHERE ${baseWhere}
+        `);
+
+      const totalNewPosts = Number(totalRes.recordset?.[0]?.TotalNewPosts || 0);
+
+      let bar = [];
+      if (granularity === "month") {
+        const map = new Map(
+          barRows.map((r) => [
+            `${r.YearNum}-${String(r.MonthNum).padStart(2, "0")}`,
+            Number(r.Total || 0),
+          ])
+        );
+        bar = Array.from({ length: 12 }, (_, i) => {
+          const m = i + 1;
+          const label = `${year}-${String(m).padStart(2, "0")}`;
+          return { label, total: map.get(label) || 0 };
+        });
+      } else {
+        const map = new Map(
+          barRows.map((r) => {
+            const d = r.DayKey instanceof Date ? r.DayKey : new Date(r.DayKey);
+            const label = `${d.getFullYear()}-${String(
+              d.getMonth() + 1
+            ).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+            return [label, Number(r.Total || 0)];
+          })
+        );
+
+        const cursor = new Date(
+          startDate.getFullYear(),
+          startDate.getMonth(),
+          startDate.getDate(),
+          0,
+          0,
+          0,
+          0
+        );
+        const endCursor = new Date(
+          endDate.getFullYear(),
+          endDate.getMonth(),
+          endDate.getDate(),
+          0,
+          0,
+          0,
+          0
+        );
+
+        while (cursor.getTime() <= endCursor.getTime()) {
+          const label = `${cursor.getFullYear()}-${String(
+            cursor.getMonth() + 1
+          ).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`;
+          bar.push({ label, total: map.get(label) || 0 });
+          cursor.setDate(cursor.getDate() + 1);
+        }
+      }
+
+      const pieCategories = (pieCategoryRes.recordset || []).map((r) => ({
+        name: r.CategoryName || "Chưa chọn",
+        value: Number(r.Total || 0),
+      }));
+
+      const pieSpecializations = (pieSpecRes.recordset || []).map((r) => ({
+        name: r.SpecializationName || "Chưa chọn",
+        value: Number(r.Total || 0),
+      }));
+
+      return res.status(200).json({
+        range,
+        year,
+        granularity,
+        startDate,
+        endDate,
+        totalNewPosts,
+        bar,
+        pieCategories,
+        pieSpecializations,
+      });
+    } catch (error) {
+      console.error("Lỗi GET /admin/reports/new-posts:", error);
+      return res.status(500).json({ message: "Lỗi server." });
+    }
+  }
+);
+
 router.get("/users/no-role", checkAuth, checkAdminRole, async (req, res) => {
   try {
     const pool = await sql.connect(sqlConfig);
@@ -466,6 +1115,8 @@ router.get("/jobs/pending", checkAuth, checkAdminRole, async (req, res) => {
         j.CreatedAt,
         j.ExpiresAt,
         j.Status,
+        j.ReasonRejected,
+        j.ConfirmedAfterReject,
         c.CompanyID,
         c.CompanyName,
         u.Email AS OwnerEmail,
@@ -477,7 +1128,7 @@ router.get("/jobs/pending", checkAuth, checkAdminRole, async (req, res) => {
       JOIN Users u ON c.OwnerUserID = u.FirebaseUserID
       LEFT JOIN Categories cat ON j.CategoryID = cat.CategoryID
       LEFT JOIN Specializations sp ON j.SpecializationID = sp.SpecializationID
-      WHERE j.Status = 0
+      WHERE j.Status IN (0, 5)
       ORDER BY j.ExpiresAt ASC, j.CreatedAt DESC
     `);
     return res.status(200).json(result.recordset);
@@ -587,8 +1238,11 @@ router.patch(
         .query(
           `
         UPDATE Jobs
-        SET Status = 1, ApprovedAt = GETDATE()
-        WHERE JobID = @JobID AND Status = 0
+        SET Status = 1,
+            ApprovedAt = GETDATE(),
+            ReasonRejected = NULL,
+            ConfirmedAfterReject = NULL
+        WHERE JobID = @JobID AND Status IN (0, 5)
         `
         );
 
@@ -613,8 +1267,12 @@ router.patch(
   checkAdminRole,
   async (req, res) => {
     const { id } = req.params;
+    const { reasonRejected } = req.body || {};
     if (!id || Number.isNaN(Number(id))) {
       return res.status(400).json({ message: "JobID không hợp lệ." });
+    }
+    if (!reasonRejected || !String(reasonRejected).trim()) {
+      return res.status(400).json({ message: "Vui lòng nhập lý do từ chối." });
     }
 
     try {
@@ -622,11 +1280,14 @@ router.patch(
       const updateRes = await pool
         .request()
         .input("JobID", sql.Int, Number(id))
+        .input("ReasonRejected", sql.NVarChar(sql.MAX), String(reasonRejected))
         .query(
           `
         UPDATE Jobs
-        SET Status = 4, ApprovedAt = NULL
-        WHERE JobID = @JobID AND Status = 0
+        SET Status = 4,
+            ApprovedAt = NULL,
+            ReasonRejected = @ReasonRejected
+        WHERE JobID = @JobID AND Status IN (0, 5)
         `
         );
 

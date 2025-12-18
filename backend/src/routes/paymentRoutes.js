@@ -44,11 +44,6 @@ const router = express.Router();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
 
-const toVietnamTime = () => {
-  const now = new Date();
-  return new Date(now.getTime() + 7 * 60 * 60 * 1000);
-};
-
 router.post("/create-checkout-session", checkAuth, async (req, res) => {
   const { planId, returnUrl, metadata } = req.body;
   const userId = req.firebaseUser.uid;
@@ -159,23 +154,14 @@ router.post("/verify-payment", checkAuth, async (req, res) => {
           .json({ message: "Gói không tìm thấy trong DB." });
       }
 
-      const startDate = toVietnamTime();
-      let endDate = new Date(startDate);
-
-      if (plan.PlanType === "SUBSCRIPTION" && plan.DurationInDays > 0) {
-        endDate.setDate(endDate.getDate() + plan.DurationInDays);
-      } else {
-        endDate.setFullYear(startDate.getFullYear() + 1000);
-      }
-
       await transaction
         .request()
         .input("UserID", sql.NVarChar, userId)
         .input("PlanID", sql.Int, planId)
-        .input("StartDate", sql.DateTime, startDate)
-        .input("EndDate", sql.DateTime, endDate)
         .input("PaymentTransactionID", sql.NVarChar, sessionId)
         .input("Status", sql.TinyInt, 1)
+        .input("PlanType", sql.NVarChar, plan.PlanType || null)
+        .input("DurationInDays", sql.Int, plan.DurationInDays || 0)
         .input("SnapshotPlanName", sql.NVarChar, plan.PlanName)
         .input("SnapshotFeatures", sql.NText, plan.Features)
         .input("SnapshotPrice", sql.Decimal(18, 2), plan.Price)
@@ -199,7 +185,17 @@ router.post("/verify-payment", checkAuth, async (req, res) => {
            Snapshot_JobPostDaily, Snapshot_PushTopDaily, Snapshot_CVStorage,
            Snapshot_ViewApplicantCount, Snapshot_RevealCandidatePhone)
           VALUES 
-          (@UserID, @PlanID, @StartDate, @EndDate, @PaymentTransactionID, @Status,
+          (
+            @UserID,
+            @PlanID,
+            GETDATE(),
+            CASE 
+              WHEN UPPER(ISNULL(@PlanType, '')) = 'SUBSCRIPTION' AND ISNULL(@DurationInDays, 0) > 0
+                THEN DATEADD(DAY, @DurationInDays, GETDATE())
+              ELSE DATEADD(YEAR, 1000, GETDATE())
+            END,
+            @PaymentTransactionID,
+            @Status,
            @SnapshotPlanName, @SnapshotFeatures, @SnapshotPrice, @SnapshotPlanType,
            @Snapshot_JobPostDaily, @Snapshot_PushTopDaily, @Snapshot_CVStorage,
            @Snapshot_ViewApplicantCount, @Snapshot_RevealCandidatePhone)

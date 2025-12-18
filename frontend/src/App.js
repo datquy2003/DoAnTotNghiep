@@ -21,6 +21,9 @@ import VipManagement from "./pages/admin/VipManagement";
 import CategoryManagement from "./pages/admin/CategoryManagement";
 import AdminAccountManagement from "./pages/admin/AdminAccountManagement";
 import TestUserCreation from "./pages/admin/TestUserCreation";
+import RevenueStats from "./pages/admin/reports/RevenueStats";
+import NewUsersStats from "./pages/admin/reports/NewUsersStats";
+import NewPostsStats from "./pages/admin/reports/NewPostsStats";
 
 import CandidateSubscription from "./pages/candidate/CandidateSubscription";
 import EmployerSubscription from "./pages/employer/EmployerSubscription";
@@ -130,6 +133,9 @@ function App() {
           <Route path="users" element={<UserManagement />} />
           <Route path="jobs" element={<JobManagement />} />
           <Route path="jobs-approval" element={<JobApproval />} />
+          <Route path="reports/revenue" element={<RevenueStats />} />
+          <Route path="reports/new-users" element={<NewUsersStats />} />
+          <Route path="reports/new-posts" element={<NewPostsStats />} />
           <Route path="vip-packages" element={<VipManagement />} />
           <Route path="categories" element={<CategoryManagement />} />
           <Route path="system-admins" element={<AdminAccountManagement />} />

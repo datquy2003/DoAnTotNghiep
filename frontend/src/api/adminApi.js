@@ -44,12 +44,24 @@ const approveJob = (jobId) => {
   return apiClient.patch(`/admin/jobs/${jobId}/approve`);
 };
 
-const rejectJob = (jobId) => {
-  return apiClient.patch(`/admin/jobs/${jobId}/reject`);
+const rejectJob = (jobId, data) => {
+  return apiClient.patch(`/admin/jobs/${jobId}/reject`, data);
 };
 
 const getActiveJobs = () => {
   return apiClient.get("/admin/jobs/active");
+};
+
+const getRevenueReport = (params = {}) => {
+  return apiClient.get("/admin/reports/revenue", { params });
+};
+
+const getNewUsersReport = (params = {}) => {
+  return apiClient.get("/admin/reports/new-users", { params });
+};
+
+const getNewPostsReport = (params = {}) => {
+  return apiClient.get("/admin/reports/new-posts", { params });
 };
 
 export const adminApi = {
@@ -66,4 +78,7 @@ export const adminApi = {
   approveJob,
   rejectJob,
   getActiveJobs,
+  getRevenueReport,
+  getNewUsersReport,
+  getNewPostsReport,
 };

@@ -1,7 +1,10 @@
-import React from "react";
-import { NavLink, Outlet, Navigate } from "react-router-dom";
+import React, { useEffect, useState } from "react";
+import { NavLink, Outlet, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import {
+  FiUser,
+  FiDollarSign,
+  FiFile,
   FiUsers,
   FiBriefcase,
   FiCheckCircle,
@@ -9,10 +12,22 @@ import {
   FiPackage,
   FiShield,
   FiTool,
+  FiBarChart2,
+  FiChevronDown,
+  FiChevronRight,
 } from "react-icons/fi";
 
 const AdminLayout = () => {
   const { appUser } = useAuth();
+  const location = useLocation();
+
+  const pathname = location?.pathname || "";
+  const isReportsRoute = pathname.startsWith("/admin/reports");
+  const [reportsOpen, setReportsOpen] = useState(false);
+
+  useEffect(() => {
+    if (isReportsRoute) setReportsOpen(true);
+  }, [isReportsRoute]);
 
   if (appUser?.RoleID !== 1 && appUser?.RoleID !== 2) {
     return <Navigate to="/" />;
@@ -24,6 +39,10 @@ const AdminLayout = () => {
     "flex items-center space-x-3 px-4 py-3 bg-blue-50 text-blue-600 border-r-4 border-blue-600 font-medium transition-colors";
   const inactiveClass =
     "flex items-center space-x-3 px-4 py-3 text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors";
+  const childActiveClass =
+    "flex items-center space-x-3 pl-12 pr-4 py-2 bg-blue-50 text-blue-600 border-r-4 border-blue-600 font-medium transition-colors";
+  const childInactiveClass =
+    "flex items-center space-x-3 pl-12 pr-4 py-2 text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors";
 
   return (
     <div className="flex min-h-[calc(100vh-64px)] bg-gray-100">
@@ -85,6 +104,58 @@ const AdminLayout = () => {
               <FiBriefcase size={20} />
               <span>Quản lý bài tuyển dụng</span>
             </NavLink>
+
+            <button
+              type="button"
+              onClick={() => setReportsOpen((v) => !v)}
+              className={
+                isReportsRoute
+                  ? "w-full flex items-center justify-between px-4 py-3 bg-blue-50 text-blue-600 border-r-4 border-blue-600 font-medium transition-colors"
+                  : "w-full flex items-center justify-between px-4 py-3 text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors"
+              }
+            >
+              <span className="flex items-center space-x-3">
+                <FiBarChart2 size={20} />
+                <span>Báo cáo thống kê</span>
+              </span>
+              {reportsOpen ? (
+                <FiChevronDown size={18} />
+              ) : (
+                <FiChevronRight size={18} />
+              )}
+            </button>
+
+            {reportsOpen && (
+              <div className="space-y-1">
+                <NavLink
+                  to="/admin/reports/revenue"
+                  className={({ isActive }) =>
+                    isActive ? childActiveClass : childInactiveClass
+                  }
+                >
+                  <FiDollarSign size={18} />
+                  <span>Doanh thu</span>
+                </NavLink>
+                <NavLink
+                  to="/admin/reports/new-users"
+                  className={({ isActive }) =>
+                    isActive ? childActiveClass : childInactiveClass
+                  }
+                >
+                  <FiUser size={18} />
+                  <span>Người dùng mới</span>
+                </NavLink>
+                <NavLink
+                  to="/admin/reports/new-posts"
+                  className={({ isActive }) =>
+                    isActive ? childActiveClass : childInactiveClass
+                  }
+                >
+                  <FiFile size={18} />
+                  <span>Bài viết mới</span>
+                </NavLink>
+              </div>
+            )}
 
             <div className="px-4 py-2 mt-6 text-xs font-semibold tracking-wider text-gray-400 uppercase">
               Hệ thống
