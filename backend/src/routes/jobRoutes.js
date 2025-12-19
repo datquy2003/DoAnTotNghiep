@@ -306,12 +306,20 @@ router.get("/active", checkAuth, async (req, res) => {
         j.Status,
         c.CompanyID,
         c.CompanyName,
+        c.LogoURL AS CompanyLogoURL,
+        c.Country AS CompanyCountry,
+        c.City AS CompanyCity,
         cat.CategoryName,
         sp.SpecializationName,
         CASE WHEN EXISTS (
           SELECT 1 FROM Applications a
           WHERE a.JobID = j.JobID AND a.CandidateID = @UserID
         ) THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS HasApplied
+        ,
+        CASE WHEN EXISTS (
+          SELECT 1 FROM SavedJobs sj
+          WHERE sj.JobID = j.JobID AND sj.UserID = @UserID
+        ) THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS HasSaved
       FROM Jobs j
       JOIN Companies c ON j.CompanyID = c.CompanyID
       LEFT JOIN Categories cat ON j.CategoryID = cat.CategoryID
@@ -323,6 +331,157 @@ router.get("/active", checkAuth, async (req, res) => {
     return res.status(200).json(result.recordset);
   } catch (error) {
     console.error("Lỗi lấy danh sách job đang tuyển:", error);
+    return res.status(500).json({ message: "Lỗi server." });
+  }
+});
+
+router.get("/saved", checkAuth, async (req, res) => {
+  const userId = req.firebaseUser.uid;
+  try {
+    const pool = await sql.connect(sqlConfig);
+
+    const roleRes = await pool
+      .request()
+      .input("UserID", sql.NVarChar, userId)
+      .query("SELECT TOP 1 RoleID FROM Users WHERE FirebaseUserID = @UserID");
+    const roleId = roleRes.recordset?.[0]?.RoleID ?? null;
+    if (Number(roleId) !== 4) {
+      return res.status(403).json({
+        message: "Chỉ ứng viên mới có thể xem danh sách việc yêu thích.",
+      });
+    }
+
+    const result = await pool.request().input("UserID", sql.NVarChar, userId)
+      .query(`
+        SELECT
+          j.JobID,
+          j.JobTitle,
+          j.CategoryID,
+          j.SpecializationID,
+          j.Location,
+          j.JobType,
+          j.SalaryMin,
+          j.SalaryMax,
+          j.Experience,
+          j.EducationLevel,
+          j.VacancyCount,
+          j.CreatedAt,
+          j.ExpiresAt,
+          j.LastPushedAt,
+          j.Status,
+          c.CompanyID,
+          c.CompanyName,
+          c.LogoURL AS CompanyLogoURL,
+          c.Country AS CompanyCountry,
+          c.City AS CompanyCity,
+          cat.CategoryName,
+          sp.SpecializationName,
+          sj.SavedAt,
+          CAST(1 AS BIT) AS HasSaved,
+          CASE WHEN EXISTS (
+            SELECT 1 FROM Applications a
+            WHERE a.JobID = j.JobID AND a.CandidateID = @UserID
+          ) THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS HasApplied
+        FROM SavedJobs sj
+        JOIN Jobs j ON sj.JobID = j.JobID
+        JOIN Companies c ON j.CompanyID = c.CompanyID
+        LEFT JOIN Categories cat ON j.CategoryID = cat.CategoryID
+        LEFT JOIN Specializations sp ON j.SpecializationID = sp.SpecializationID
+        WHERE sj.UserID = @UserID
+        ORDER BY sj.SavedAt DESC
+      `);
+
+    return res.status(200).json(result.recordset || []);
+  } catch (error) {
+    console.error("Lỗi GET /jobs/saved:", error);
+    return res.status(500).json({ message: "Lỗi server." });
+  }
+});
+
+router.post("/:id/save", checkAuth, async (req, res) => {
+  const userId = req.firebaseUser.uid;
+  const jobId = Number(req.params.id);
+
+  if (!jobId || Number.isNaN(jobId)) {
+    return res.status(400).json({ message: "JobID không hợp lệ." });
+  }
+
+  try {
+    const pool = await sql.connect(sqlConfig);
+
+    const roleRes = await pool
+      .request()
+      .input("UserID", sql.NVarChar, userId)
+      .query("SELECT TOP 1 RoleID FROM Users WHERE FirebaseUserID = @UserID");
+    const roleId = roleRes.recordset?.[0]?.RoleID ?? null;
+    if (Number(roleId) !== 4) {
+      return res.status(403).json({
+        message: "Chỉ ứng viên mới có thể yêu thích tin tuyển dụng.",
+      });
+    }
+
+    const jobRes = await pool.request().input("JobID", sql.Int, jobId).query(`
+      SELECT TOP 1 JobID
+      FROM Jobs
+      WHERE JobID = @JobID
+    `);
+    if (!jobRes.recordset?.[0]) {
+      return res
+        .status(404)
+        .json({ message: "Không tìm thấy tin tuyển dụng." });
+    }
+
+    await pool
+      .request()
+      .input("UserID", sql.NVarChar, userId)
+      .input("JobID", sql.Int, jobId).query(`
+        IF NOT EXISTS (
+          SELECT 1 FROM SavedJobs WHERE UserID = @UserID AND JobID = @JobID
+        )
+        BEGIN
+          INSERT INTO SavedJobs(UserID, JobID, SavedAt)
+          VALUES (@UserID, @JobID, GETDATE())
+        END
+      `);
+
+    return res.status(200).json({ message: "Đã thêm vào việc yêu thích." });
+  } catch (error) {
+    console.error("Lỗi POST /jobs/:id/save:", error);
+    return res.status(500).json({ message: "Lỗi server." });
+  }
+});
+
+router.delete("/:id/save", checkAuth, async (req, res) => {
+  const userId = req.firebaseUser.uid;
+  const jobId = Number(req.params.id);
+
+  if (!jobId || Number.isNaN(jobId)) {
+    return res.status(400).json({ message: "JobID không hợp lệ." });
+  }
+
+  try {
+    const pool = await sql.connect(sqlConfig);
+
+    const roleRes = await pool
+      .request()
+      .input("UserID", sql.NVarChar, userId)
+      .query("SELECT TOP 1 RoleID FROM Users WHERE FirebaseUserID = @UserID");
+    const roleId = roleRes.recordset?.[0]?.RoleID ?? null;
+    if (Number(roleId) !== 4) {
+      return res.status(403).json({
+        message: "Chỉ ứng viên mới có thể bỏ yêu thích tin tuyển dụng.",
+      });
+    }
+
+    await pool
+      .request()
+      .input("UserID", sql.NVarChar, userId)
+      .input("JobID", sql.Int, jobId)
+      .query("DELETE FROM SavedJobs WHERE UserID = @UserID AND JobID = @JobID");
+
+    return res.status(200).json({ message: "Đã bỏ yêu thích." });
+  } catch (error) {
+    console.error("Lỗi DELETE /jobs/:id/save:", error);
     return res.status(500).json({ message: "Lỗi server." });
   }
 });

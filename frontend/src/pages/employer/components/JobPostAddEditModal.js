@@ -502,6 +502,69 @@ export default function JobPostAddEditModal({
       return;
     }
 
+    {
+      const today = new Date();
+      const todayStart = new Date(
+        today.getFullYear(),
+        today.getMonth(),
+        today.getDate(),
+        0,
+        0,
+        0,
+        0
+      );
+      const expires = new Date(`${job.ExpiresAt}T00:00:00`);
+      if (Number.isNaN(expires.getTime())) {
+        toast.error("Ngày hết hạn không hợp lệ.");
+        return;
+      }
+      if (expires.getTime() <= todayStart.getTime()) {
+        toast.error("Ngày hết hạn phải từ ngày mai trở đi.");
+        return;
+      }
+    }
+
+    const workingTimes = Array.isArray(job?.WorkingTimes)
+      ? job.WorkingTimes
+      : [];
+    const hasAnyWorkingTimeInput = workingTimes.some((wt) => {
+      const dayFrom = (wt?.dayFrom || "").toString().trim();
+      const dayTo = (wt?.dayTo || "").toString().trim();
+      const timeFrom = (wt?.timeFrom || "").toString().trim();
+      const timeTo = (wt?.timeTo || "").toString().trim();
+      return dayFrom || dayTo || timeFrom || timeTo;
+    });
+
+    if (hasAnyWorkingTimeInput) {
+      const invalidRow = workingTimes.find((wt) => {
+        const dayFrom = (wt?.dayFrom || "").toString().trim();
+        const dayTo = (wt?.dayTo || "").toString().trim();
+        const timeFrom = (wt?.timeFrom || "").toString().trim();
+        const timeTo = (wt?.timeTo || "").toString().trim();
+
+        if (!dayFrom && !dayTo && !timeFrom && !timeTo) return false;
+
+        const hasAnyDay = !!dayFrom || !!dayTo;
+        const hasAnyTime = !!timeFrom || !!timeTo;
+        const hasFullDay = !!dayFrom && !!dayTo;
+        const hasFullTime = !!timeFrom && !!timeTo;
+
+        if (hasAnyDay && !hasFullDay) return true;
+        if (hasAnyTime && !hasFullTime) return true;
+        if (hasFullDay && !hasFullTime) return true;
+        if (hasFullTime && !hasFullDay) return true;
+
+        return false;
+      });
+
+      if (invalidRow) {
+        toast.error(
+          "Thời gian làm việc chưa đầy đủ. Vui lòng chọn đủ Từ thứ/Đến thứ và Từ giờ/Đến giờ cho mỗi dòng."
+        );
+        return;
+      }
+    }
+
     if (mode === "resubmit") {
       if (
         !job.ConfirmedAfterReject ||
@@ -1186,7 +1249,11 @@ export default function JobPostAddEditModal({
                   onChange={(e) =>
                     handleInputChange("ExpiresAt", e.target.value)
                   }
-                  min={new Date().toISOString().split("T")[0]}
+                  min={(() => {
+                    const d = new Date();
+                    d.setDate(d.getDate() + 1);
+                    return d.toISOString().split("T")[0];
+                  })()}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
               </label>

@@ -64,10 +64,7 @@ CREATE TABLE Specializations (
     CategoryID int NOT NULL,
     SpecializationName nvarchar(100) NOT NULL,
     
-    CONSTRAINT FK_Specializations_Categories 
-        FOREIGN KEY (CategoryID) 
-        REFERENCES Categories(CategoryID) 
-        ON DELETE CASCADE
+    CONSTRAINT FK_Specializations_Categories FOREIGN KEY (CategoryID) REFERENCES Categories(CategoryID) ON DELETE CASCADE
 );
 GO
 
@@ -212,10 +209,7 @@ CREATE TABLE ApplicationStatusHistory (
     
     ChangedAt datetime DEFAULT GETDATE(),
     
-    CONSTRAINT FK_ApplicationStatusHistory_Applications 
-        FOREIGN KEY (ApplicationID) 
-        REFERENCES Applications(ApplicationID) 
-        ON DELETE CASCADE
+    CONSTRAINT FK_ApplicationStatusHistory_Applications FOREIGN KEY (ApplicationID) REFERENCES Applications(ApplicationID) ON DELETE CASCADE
 );
 GO
 

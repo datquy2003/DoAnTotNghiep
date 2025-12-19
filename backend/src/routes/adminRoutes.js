@@ -543,7 +543,6 @@ router.get(
         j.ApprovedAt IS NOT NULL
         AND j.ApprovedAt >= @StartDate
         AND j.ApprovedAt < @EndDate
-        AND j.Status = 1
       `;
 
       let barRows = [];
